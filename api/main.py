@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 
 app = FastAPI()
-
+from api.charts.top import router as top_router
+app.include_router(top_router)
 @app.get("/")
 def root():
     return {
