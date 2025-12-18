@@ -3,25 +3,47 @@ import xml.etree.ElementTree as ET
 
 def fetch_ugandan_music(max_results=10):
     feed_url = "https://www.youtube.com/feeds/videos.xml?search_query=ugandan+music"
-    response = requests.get(feed_url, timeout=10)
 
-    root = ET.fromstring(response.text)
+    try:
+        response = requests.get(feed_url, timeout=10)
 
-    ns = {"yt": "http://www.youtube.com/xml/schemas/2015"}
-    results = []
+        if response.status_code != 200:
+            return {
+                "status": "error",
+                "message": "YouTube feed unavailable"
+            }
 
-    for entry in root.findall("entry")[:max_results]:
-        video_id = entry.find("yt:videoId", ns).text
-        title = entry.find("title").text
+        root = ET.fromstring(response.text)
 
-        results.append({
-            "title": title,
-            "video_id": video_id,
-            "url": f"https://www.youtube.com/watch?v={video_id}"
-        })
+        ns = {
+            "yt": "http://www.youtube.com/xml/schemas/2015",
+            "atom": "http://www.w3.org/2005/Atom"
+        }
 
-    return {
-        "status": "ok",
-        "source": "youtube_rss",
-        "results": results
-    }
+        results = []
+
+        for entry in root.findall("atom:entry", ns)[:max_results]:
+            video_id = entry.find("yt:videoId", ns)
+            title = entry.find("atom:title", ns)
+
+            if video_id is None or title is None:
+                continue
+
+            results.append({
+                "title": title.text,
+                "video_id": video_id.text,
+                "url": f"https://www.youtube.com/watch?v={video_id.text}"
+            })
+
+        return {
+            "status": "ok",
+            "source": "youtube_rss",
+            "results": results
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": "Failed to parse YouTube feed",
+            "detail": str(e)
+        }
