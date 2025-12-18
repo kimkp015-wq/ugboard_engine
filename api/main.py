@@ -1,27 +1,16 @@
 from fastapi import FastAPI
-from datetime import datetime
+from api.ingestion.youtube import fetch_ugandan_music
 
-app = FastAPI(
-    title="The UG Board",
-    description="Uganda music charts engine",
-    version="0.1.0"
-)
+app = FastAPI(title="The UG Board")
 
 @app.get("/")
 def home():
-    return {
-        "engine": "UG Board",
-        "status": "running",
-        "time": datetime.utcnow()
-    }
-
-@app.get("/charts/top100")
-def top_100():
-    return {
-        "chart": "Uganda Top 100",
-        "status": "collecting data"
-    }
+    return {"engine": "UG Board", "status": "running"}
 
 @app.get("/health")
 def health():
     return {"ok": True}
+
+@app.get("/ingest/youtube")
+def ingest_youtube():
+    return fetch_ugandan_music(10)
