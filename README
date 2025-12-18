@@ -1,1 +1,16 @@
-The UG Board — Uganda music charts engine
+# The UG Board Engine
+
+A data-driven music chart engine for Uganda.
+
+## What this is
+This is a **FastAPI backend service** that:
+- Aggregates radio, TV, streaming, and online signals
+- Computes Uganda Top 100 & category charts
+- Tracks engine progress and live updates
+- Supports admin adjustments (limited & logged)
+
+## How to run locally
+
+```bash
+pip install -r requirements.txt
+uvicorn api.main:app --reload
