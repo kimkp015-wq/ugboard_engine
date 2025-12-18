@@ -1,3 +1,8 @@
+from fastapi import APIRouter
+
+router = APIRouter()
+
+@router.get("/regions")
 def build_regions():
     return {
         "status": "ok",
