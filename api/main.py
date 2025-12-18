@@ -1,12 +1,20 @@
 from fastapi import FastAPI
-from api.charts import top100
+
+# import routers
+from api.charts.top100 import router as top100_router
+from api.charts.trending import router as trending_router
+from api.charts.regions import router as regions_router
+from api.charts.boost import router as boost_router
 
 app = FastAPI(title="UG Board Engine")
 
-# root
+# root test
 @app.get("/")
 def root():
     return {"status": "ok", "engine": "ugboard"}
 
-# Top 100
-app.include_router(top100.router, prefix="/charts/top100", tags=["Top 100"])
+# include routes
+app.include_router(top100_router, prefix="/charts")
+app.include_router(trending_router, prefix="/charts")
+app.include_router(regions_router, prefix="/charts")
+app.include_router(boost_router, prefix="/charts")
