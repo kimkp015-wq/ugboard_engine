@@ -1,15 +1,37 @@
 from fastapi import APIRouter
 
-router = APIRouter()
+router = APIRouter(prefix="/charts", tags=["Charts"])
 
-@router.get("/charts/top")
-def top_charts():
+# Demo Top 100 Uganda songs (static test data)
+TOP_100 = [
+    {
+        "rank": 1,
+        "title": "Demo Hit One",
+        "artist": "Ugandan Artist A",
+        "category": "Pop",
+        "score": 98.5
+    },
+    {
+        "rank": 2,
+        "title": "Demo Hit Two",
+        "artist": "Ugandan Artist B",
+        "category": "RnB & Soul",
+        "score": 96.2
+    },
+    {
+        "rank": 3,
+        "title": "Demo Hit Three",
+        "artist": "Ugandan Artist C",
+        "category": "Hip-Hop",
+        "score": 94.1
+    }
+]
+
+@router.get("/top")
+def top_chart():
     return {
         "status": "ok",
-        "type": "top",
-        "data": [
-            {"rank": 1, "title": "Song One", "artist": "Artist A"},
-            {"rank": 2, "title": "Song Two", "artist": "Artist B"},
-            {"rank": 3, "title": "Song Three", "artist": "Artist C"}
-        ]
+        "chart": "Uganda Top 100",
+        "total_songs": len(TOP_100),
+        "data": TOP_100
     }
