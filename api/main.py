@@ -1,3 +1,5 @@
+NO db import needed
+
 from fastapi import FastAPI
 from api.charts import top100
 
