@@ -1,3 +1,4 @@
+UG_TOP_SONGS = []
 from fastapi import APIRouter
 
 router = APIRouter()
@@ -34,3 +35,12 @@ def build_top_100():
         "total": len(scored),
         "data": scored
     }
+for i in range(1, 101):
+    UG_TOP_SONGS.append({
+        "id": i,
+        "title": f"Song {i}",
+        "artist": f"Artist {i}",
+        "streams_score": 10,
+        "radio_score": 5,
+        "admin_boost": 0
+    })
