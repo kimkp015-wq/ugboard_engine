@@ -1,5 +1,5 @@
 from api.charts.data import UG_TOP_SONGS
-from api.admin.boost import BOOST_LOG
+BOOST_LOG = {}
 import random
 from datetime import datetime, timedelta
 
