@@ -1,13 +1,18 @@
 from api.charts.data import UG_TOP_SONGS
-from api.charts.admin import ADMIN_BOOST
+from api.admin.boost import BOOST_LOG
 import random
 from datetime import datetime, timedelta
 
+BOOST_SCORE = 25  # score added per admin boost
+
 def build_top_100():
+    # Use EAT (UTC+3)
     eat_now = datetime.utcnow() + timedelta(hours=3)
     today = eat_now.date().isoformat()
 
-    random.seed(today)
+    random.seed(today)  # lock daily scores
+
+    boosts_today = BOOST_LOG.get(today, [])
 
     ranked = []
 
@@ -18,17 +23,18 @@ def build_top_100():
 
         base_score = youtube_signal + radio_signal + social_signal
 
-        key = f"{song['artist']} - {song['title']}"
-        boost = ADMIN_BOOST.get(key, 0)
+        boost_count = boosts_today.count(song["id"])
+        boost_score = boost_count * BOOST_SCORE
 
-        final_score = base_score + boost
+        total_score = base_score + boost_score
 
         ranked.append({
             "rank": index,
+            "id": song["id"],
             "artist": song["artist"],
             "title": song["title"],
-            "score": final_score,
-            "boost": boost,
+            "score": total_score,
+            "boosts": boost_count,
             "signals": {
                 "youtube": youtube_signal,
                 "radio": radio_signal,
@@ -36,7 +42,7 @@ def build_top_100():
             }
         })
 
-    ranked = sorted(ranked, key=lambda x: x["score"], reverse=True)
+    ranked.sort(key=lambda x: x["score"], reverse=True)
 
     for i, song in enumerate(ranked, start=1):
         song["rank"] = i
@@ -46,6 +52,7 @@ def build_top_100():
         "chart": "Uganda Top 100",
         "locked_for": today,
         "timezone": "EAT (UTC+3)",
-        "boosts_active": True,
+        "boost_score": BOOST_SCORE,
+        "total": len(ranked),
         "data": ranked
     }
