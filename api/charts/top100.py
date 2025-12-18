@@ -1,46 +1,37 @@
-UG_TOP_SONGS = []
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from api.db import SessionLocal
+from api.models.song import Song
 
 router = APIRouter()
 
-UG_TOP_SONGS = [
-    {"artist": "Artist A", "title": "Song A", "streams_score": 50, "radio_score": 20, "admin_boost": 0},
-    {"artist": "Artist B", "title": "Song B", "streams_score": 40, "radio_score": 30, "admin_boost": 10},
-]
-
-def calculate_score(song):
-    return (
-        song.get("streams_score", 0)
-        + song.get("radio_score", 0)
-        + song.get("admin_boost", 0)
-    )
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 @router.get("/top100")
-def build_top_100():
-    scored = []
-
-    for song in UG_TOP_SONGS:
-        s = song.copy()
-        s["score"] = calculate_score(song)
-        scored.append(s)
-
-    scored.sort(key=lambda x: x["score"], reverse=True)
-
-    for i, song in enumerate(scored, start=1):
-        song["rank"] = i
+def top_100(db: Session = Depends(get_db)):
+    songs = (
+        db.query(Song)
+        .order_by(Song.score.desc())
+        .limit(100)
+        .all()
+    )
 
     return {
         "status": "ok",
-        "chart": "Uganda Top 100",
-        "total": len(scored),
-        "data": scored
+        "count": len(songs),
+        "songs": [
+            {
+                "id": s.id,
+                "title": s.title,
+                "artist": s.artist,
+                "region": s.region,
+                "score": s.score,
+            }
+            for s in songs
+        ]
     }
-for i in range(1, 101):
-    UG_TOP_SONGS.append({
-        "id": i,
-        "title": f"Song {i}",
-        "artist": f"Artist {i}",
-        "streams_score": 10,
-        "radio_score": 5,
-        "admin_boost": 0
-    })
