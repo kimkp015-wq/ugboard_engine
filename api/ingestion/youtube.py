@@ -4,13 +4,18 @@ import xml.etree.ElementTree as ET
 def fetch_ugandan_music(max_results=10):
     feed_url = "https://www.youtube.com/feeds/videos.xml?search_query=ugandan+music"
 
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+
     try:
-        response = requests.get(feed_url, timeout=10)
+        response = requests.get(feed_url, headers=headers, timeout=10)
 
         if response.status_code != 200:
             return {
                 "status": "error",
-                "message": "YouTube feed unavailable"
+                "message": "YouTube feed unavailable",
+                "code": response.status_code
             }
 
         root = ET.fromstring(response.text)
