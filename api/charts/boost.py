@@ -1,3 +1,6 @@
+from fastapi import APIRouter
+
+router = APIRouter()from api.admin.admin import check_and_consume_boost
 from datetime import datetime, timedelta
 
 # In-memory daily counter (resets daily)
@@ -29,3 +32,6 @@ def boost_song(song_id: str):
         "timezone": "EAT (UTC+3)",
         "date": today
     }
+    @router.post("/boost")
+def boost(song_id: str):
+    return boost_song(song_id)
