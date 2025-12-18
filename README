@@ -1,16 +1,8 @@
-# The UG Board Engine
+The UG Board Engine
 
-A data-driven music chart engine for Uganda.
+This is a FastAPI backend.
+It is NOT a Streamlit app.
 
-## What this is
-This is a **FastAPI backend service** that:
-- Aggregates radio, TV, streaming, and online signals
-- Computes Uganda Top 100 & category charts
-- Tracks engine progress and live updates
-- Supports admin adjustments (limited & logged)
-
-## How to run locally
-
-```bash
+To run:
 pip install -r requirements.txt
-uvicorn api.main:app --reload
+uvicorn api.main:app
