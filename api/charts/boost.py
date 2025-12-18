@@ -1,6 +1,6 @@
 from fastapi import APIRouter
-from api.admin.admin import check_and_consume_boost
 from datetime import datetime, timedelta
+from api.admin.admin import check_and_consume_boost
 
 router = APIRouter()
 
@@ -10,7 +10,7 @@ MAX_DAILY_BOOSTS = 10
 
 
 @router.post("/boost")
-def boost_song(song_id: str):
+def boost(song_id: str):
     # Use EAT (UTC+3)
     eat_now = datetime.utcnow() + timedelta(hours=3)
     today = eat_now.date().isoformat()
@@ -26,36 +26,11 @@ def boost_song(song_id: str):
             "date": today
         }
 
-    BOOST_LOG[today].append(song_id)
-
-    return {
-        "status": "ok",
-        "boosted_song": song_id,
-        "boosts_today": len(BOOST_LOG[today]),
-        "remaining": MAX_DAILY_BOOSTS - len(BOOST_LOG[today]),
-        "timezone": "EAT (UTC+3)",
-        "date": today
-    }
-from api.admin.admin import check_and_consume_boost
-from datetime import datetime, timedelta
-
-# In-memory daily counter (resets daily)
-BOOST_LOG = {}
-
-MAX_DAILY_BOOSTS = 10
-
-def boost_song(song_id: str):
-    # Use EAT (UTC+3)
-    eat_now = datetime.utcnow() + timedelta(hours=3)
-    today = eat_now.date().isoformat()
-
-    if today not in BOOST_LOG:
-        BOOST_LOG[today] = []
-
-    if len(BOOST_LOG[today]) >= MAX_DAILY_BOOSTS:
+    # Optional admin boost check
+    if not check_and_consume_boost():
         return {
             "status": "error",
-            "message": "Daily boost limit reached (10)"
+            "message": "No boosts remaining"
         }
 
     BOOST_LOG[today].append(song_id)
@@ -68,6 +43,3 @@ def boost_song(song_id: str):
         "timezone": "EAT (UTC+3)",
         "date": today
     }
-    @router.post("/boost")
-def boost(song_id: str):
-    return boost_song(song_id)
