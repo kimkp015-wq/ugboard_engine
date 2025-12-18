@@ -1,8 +1,14 @@
 from api.charts.data import UG_TOP_SONGS
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 
 def build_trending():
+    # Convert UTC to EAT (UTC +3)
+    eat_now = datetime.utcnow() + timedelta(hours=3)
+    today = eat_now.date().isoformat()
+
+    random.seed(today)  # 🔒 lock scores for EAT day
+
     trending = []
 
     for song in UG_TOP_SONGS:
@@ -23,7 +29,8 @@ def build_trending():
     return {
         "status": "ok",
         "chart": "Uganda Trending Songs",
-        "generated_at": datetime.utcnow().isoformat(),
+        "locked_for": today,
+        "timezone": "EAT (UTC+3)",
         "total": len(trending),
         "data": trending
     }
