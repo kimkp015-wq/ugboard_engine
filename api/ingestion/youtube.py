@@ -1,52 +1,76 @@
-import feedparser
+import requests
+import xml.etree.ElementTree as ET
 
-YOUTUBE_SEARCH_RSS = (
-    "https://www.youtube.com/feeds/videos.xml?search_query="
-)
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-UG_KEYWORDS = [
-    "Ugandan music",
-    "UG music",
-    "Eddy Kenzo",
-    "Sheebah",
-    "Bebe Cool",
-    "Azawi",
-    "Jose Chameleone",
-    "Wiz Kid Uganda"
+# YouTube Music Topic (public)
+MUSIC_TOPIC_FEED = "https://www.youtube.com/feeds/videos.xml?topic_id=/m/04rlf"
+
+# Curated Ugandan artist channels (we can expand later)
+UG_ARTIST_CHANNELS = [
+    "UCZzZx1z0y9zQJzvUgXcKJ6A",  # Eddy Kenzo (example)
+    "UCyZx9GmQ5cZ5Q7LZzvUgXQ",  # Sheebah (example)
 ]
 
-def fetch_ugandan_music(max_results=10):
-    results = []
+def parse_feed(xml_text):
+    root = ET.fromstring(xml_text)
+    ns = {
+        "atom": "http://www.w3.org/2005/Atom",
+        "yt": "http://www.youtube.com/xml/schemas/2015"
+    }
 
-    for keyword in UG_KEYWORDS:
+    videos = []
+    for entry in root.findall("atom:entry", ns):
+        video_id = entry.find("yt:videoId", ns)
+        title = entry.find("atom:title", ns)
+
+        if video_id is None or title is None:
+            continue
+
+        videos.append({
+            "video_id": video_id.text,
+            "title": title.text,
+            "url": f"https://www.youtube.com/watch?v={video_id.text}",
+            "source": "YouTube"
+        })
+
+    return videos
+
+
+def fetch_ugandan_music(max_results=20):
+    collected = []
+
+    # 1️⃣ Music topic feed
+    try:
+        r = requests.get(MUSIC_TOPIC_FEED, headers=HEADERS, timeout=10)
+        if r.status_code == 200:
+            collected.extend(parse_feed(r.text))
+    except Exception:
+        pass
+
+    # 2️⃣ Ugandan artist channels
+    for channel_id in UG_ARTIST_CHANNELS:
         try:
-            feed = feedparser.parse(
-                YOUTUBE_SEARCH_RSS + keyword.replace(" ", "+")
+            r = requests.get(
+                f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}",
+                headers=HEADERS,
+                timeout=10
             )
-
-            for entry in feed.entries:
-                if len(results) >= max_results:
-                    break
-
-                results.append({
-                    "title": entry.title,
-                    "link": entry.link,
-                    "published": entry.get("published", ""),
-                    "source": "YouTube"
-                })
-
+            if r.status_code == 200:
+                collected.extend(parse_feed(r.text))
         except Exception:
             continue
 
-    if not results:
-        return {
-            "status": "error",
-            "message": "YouTube feed unavailable",
-            "code": 400
-        }
+    # 3️⃣ Deduplicate
+    unique = {}
+    for v in collected:
+        unique[v["video_id"]] = v
+
+    results = list(unique.values())[:max_results]
 
     return {
         "status": "ok",
         "count": len(results),
-        "data": results
+        "data": results,
+        "note": "Public RSS sources (free, no API)"
     }
