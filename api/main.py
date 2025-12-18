@@ -1,13 +1,14 @@
 from fastapi import FastAPI
 from api.ingestion.youtube import fetch_ugandan_music
-import os
-import uvicorn
 
 app = FastAPI(title="The UG Board")
 
 @app.get("/")
 def home():
-    return {"engine": "UG Board", "status": "running"}
+    return {
+        "engine": "UG Board",
+        "status": "running"
+    }
 
 @app.get("/health")
 def health():
