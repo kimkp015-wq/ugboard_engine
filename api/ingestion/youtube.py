@@ -1,56 +1,54 @@
+from fastapi import FastAPI
 import requests
-import xml.etree.ElementTree as ET
+import feedparser
 
-def fetch_ugandan_music(max_results=10):
-    feed_url = "https://www.youtube.com/feeds/videos.xml?topic_id=/m/04rlf"
+app = FastAPI(title="UG Board Engine")
 
-    headers = {
-        "User-Agent": "Mozilla/5.0"
+YOUTUBE_RSS_URL = "https://www.youtube.com/feeds/videos.xml?channel_id="
+
+# Sample Ugandan music channels (can expand later)
+UG_CHANNELS = {
+    "Eddy Kenzo": "UCZzZx1z0y9zQJzvUgXcKJ6A",
+    "Sheebah": "UCyZx9GmQ5cZ5Q7LZzvUgXQ",
+    "Jose Chameleone": "UC1UgZChameleonOfficial",
+}
+
+@app.get("/")
+def root():
+    return {
+        "engine": "UG Board",
+        "status": "running"
     }
 
-    try:
-        response = requests.get(feed_url, headers=headers, timeout=10)
+@app.get("/ingest/youtube")
+def ingest_youtube():
+    results = []
 
-        if response.status_code != 200:
-            return {
-                "status": "error",
-                "message": "YouTube feed unavailable",
-                "code": response.status_code
-            }
+    for artist, channel_id in UG_CHANNELS.items():
+        try:
+            feed = feedparser.parse(YOUTUBE_RSS_URL + channel_id)
 
-        root = ET.fromstring(response.text)
+            for entry in feed.entries[:5]:
+                results.append({
+                    "artist": artist,
+                    "title": entry.title,
+                    "link": entry.link,
+                    "published": entry.get("published", "")
+                })
 
-        ns = {
-            "yt": "http://www.youtube.com/xml/schemas/2015",
-            "atom": "http://www.w3.org/2005/Atom"
-        }
+        except Exception:
+            continue
 
-        results = []
-
-        for entry in root.findall("atom:entry", ns)[:max_results]:
-            video_id = entry.find("yt:videoId", ns)
-            title = entry.find("atom:title", ns)
-            channel = entry.find("atom:author/atom:name", ns)
-
-            if video_id is None or title is None:
-                continue
-
-            results.append({
-                "title": title.text,
-                "channel": channel.text if channel is not None else "Unknown",
-                "video_id": video_id.text,
-                "url": f"https://www.youtube.com/watch?v={video_id.text}"
-            })
-
-        return {
-            "status": "ok",
-            "source": "youtube_music_topic",
-            "results": results
-        }
-
-    except Exception as e:
+    if not results:
         return {
             "status": "error",
-            "message": "Failed to parse YouTube feed",
-            "detail": str(e)
+            "message": "YouTube feed unavailable",
+            "code": 400
         }
+
+    return {
+        "status": "ok",
+        "source": "YouTube RSS",
+        "count": len(results),
+        "data": results
+    }
