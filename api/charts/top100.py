@@ -1,7 +1,4 @@
-# api/charts/top100.py
-
 from api.charts.data import UG_TOP_SONGS
-from datetime import datetime
 
 def build_top_100():
     ranked = []
@@ -10,8 +7,7 @@ def build_top_100():
         ranked.append({
             "rank": index,
             "artist": song["artist"],
-            "title": song["title"],
-            "last_updated": datetime.utcnow().isoformat()
+            "title": song["title"]
         })
 
     return {

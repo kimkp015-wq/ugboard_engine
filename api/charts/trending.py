@@ -1,17 +1,18 @@
-# api/charts/trending.py
-
-TRENDING_SONGS = [
-    {"rank": 1, "artist": "Ava Peace", "title": "Danger"},
-    {"rank": 2, "artist": "Joshua Baraka", "title": "Wrong Places"},
-    {"rank": 3, "artist": "Azawi", "title": "Slow Dancing"},
-    {"rank": 4, "artist": "Sheebah", "title": "Karma"},
-    {"rank": 5, "artist": "Eddy Kenzo", "title": "Balippola"},
-]
+from api.charts.data import UG_TOP_SONGS
 
 def build_trending():
+    trending = []
+
+    for index, song in enumerate(UG_TOP_SONGS[:5], start=1):
+        trending.append({
+            "rank": index,
+            "artist": song["artist"],
+            "title": song["title"]
+        })
+
     return {
         "status": "ok",
-        "chart": "Uganda Trending Songs",
-        "total": len(TRENDING_SONGS),
-        "data": TRENDING_SONGS
+        "chart": "Uganda Trending",
+        "total": len(trending),
+        "data": trending
     }
