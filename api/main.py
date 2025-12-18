@@ -1,7 +1,10 @@
+from api.db import engine
+from api.models.song import Base
 from fastapi import FastAPI
 from api.charts import top100, trending, regions, boost
 
 app = FastAPI(title="UG Board Engine")
+Base.metadata.create_all(bind=engine)
 
 # Root health check
 @app.get("/")
