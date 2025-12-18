@@ -2,8 +2,6 @@ from fastapi import APIRouter
 
 router = APIRouter(prefix="/charts", tags=["Charts"])
 
-TOP_CHART = []
-
 categories = [
     "Pop",
     "RnB & Soul",
@@ -12,16 +10,17 @@ categories = [
     "Gospel"
 ]
 
-# Generate demo Top 20
+TOP_CHART = []
+
 rank = 1
 for category in categories:
-    for i in range(1, 5):
+    for i in range(1, 21):  # 20 songs per category = 100 total
         TOP_CHART.append({
             "rank": rank,
             "title": f"Demo Song {rank}",
             "artist": f"Ugandan Artist {rank}",
             "category": category,
-            "score": round(100 - rank * 1.3, 2)
+            "score": round(120 - rank * 0.9, 2)
         })
         rank += 1
 
@@ -29,7 +28,7 @@ for category in categories:
 def top_chart():
     return {
         "status": "ok",
-        "chart": "Uganda Top 20 (Demo)",
+        "chart": "Uganda Top 100 (Demo)",
         "total_songs": len(TOP_CHART),
         "data": TOP_CHART
     }
