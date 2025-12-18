@@ -1,0 +1,22 @@
+UG_TOP_SONGS = [
+    {"rank": 1, "artist": "Omega 256", "title": "See You Tonight ft Cindy Sanyu"},
+    {"rank": 2, "artist": "Elijah Kitaka", "title": "Ekyange"},
+    {"rank": 3, "artist": "Joshua Baraka", "title": "Wrong Places"},
+    {"rank": 4, "artist": "Fyno Ug", "title": "Che Che"},
+    {"rank": 5, "artist": "Dax Vibez", "title": "Good Idea ft Elijah Kitaka"},
+    {"rank": 6, "artist": "JPC Again", "title": "Eden ft Ava Peace"},
+    {"rank": 7, "artist": "Ava Peace", "title": "Danger"},
+    {"rank": 8, "artist": "Azawi", "title": "Slow Dancing"},
+    {"rank": 9, "artist": "Rickman Manrick", "title": "You"},
+    {"rank": 10, "artist": "Sheebah", "title": "Karma"},
+    {"rank": 11, "artist": "Eddy Kenzo", "title": "Balippola"},
+    {"rank": 12, "artist": "B2C", "title": "Kasepiki"},
+    {"rank": 13, "artist": "Vinka", "title": "All Over You"},
+    {"rank": 14, "artist": "John Blaq", "title": "Commander"},
+    {"rank": 15, "artist": "Spice Diana", "title": "Nkubakyeyo"},
+    {"rank": 16, "artist": "Pallaso", "title": "Binyuma"},
+    {"rank": 17, "artist": "A Pass", "title": "Wuuyo"},
+    {"rank": 18, "artist": "Grenade Official", "title": "Ndi Mutwe"},
+    {"rank": 19, "artist": "King Saha", "title": "TikTok Life"},
+    {"rank": 20, "artist": "Zex Bilangilangi", "title": "Nalinda"}
+]
