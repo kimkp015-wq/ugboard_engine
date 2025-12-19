@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 from datetime import datetime
 import json
@@ -6,64 +6,55 @@ import os
 
 router = APIRouter()
 
-YOUTUBE_FILE = "data/youtube.json"
-BOOST_FILE = "data/boost.json"
-
-YOUTUBE_WEIGHT = 3
+DATA_FILE = "data/youtube.json"
 
 
-class YouTubePlay(BaseModel):
+class YouTubeIngest(BaseModel):
     title: str
     artist: str
     views: int
 
+    @field_validator("title", "artist")
+    @classmethod
+    def not_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError("title and artist cannot be empty")
+        return v.strip()
+
     @field_validator("views")
     @classmethod
-    def positive(cls, v):
-        if v <= 0:
+    def views_positive(cls, v):
+        if v < 0:
             raise ValueError("views must be positive")
         return v
 
 
-def load_json(path):
-    if not os.path.exists(path):
-        return []
-    with open(path, "r") as f:
-        return json.load(f)
-
-
-def save_json(path, data):
-    os.makedirs("data", exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-
-
 @router.post("/ingest/youtube")
-def ingest_youtube(payload: YouTubePlay):
-    yt = load_json(YOUTUBE_FILE)
-    boosts = load_json(BOOST_FILE)
+def ingest_youtube(payload: YouTubeIngest):
+    os.makedirs("data", exist_ok=True)
 
-    yt.append({
+    # simple scoring rule (safe & free)
+    score = payload.views // 1000  # 1 point per 1,000 views
+
+    entry = {
         "title": payload.title,
         "artist": payload.artist,
         "views": payload.views,
-        "time": datetime.utcnow().isoformat()
-    })
+        "score": score,
+        "ingested_at": datetime.utcnow().isoformat()
+    }
 
-    boosts.append({
-        "title": payload.title,
-        "artist": payload.artist,
-        "points": payload.views * YOUTUBE_WEIGHT,
-        "source": "youtube",
-        "time": datetime.utcnow().isoformat()
-    })
+    data = []
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            data = json.load(f)
 
-    save_json(YOUTUBE_FILE, yt)
-    save_json(BOOST_FILE, boosts)
+    data.append(entry)
+
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=2)
 
     return {
-        "status": "youtube ingested",
-        "title": payload.title,
-        "artist": payload.artist,
-        "points_added": payload.views * YOUTUBE_WEIGHT
+        "status": "ok",
+        "score_added": score
     }
