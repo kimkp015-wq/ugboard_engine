@@ -1,24 +1,31 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Depends
 from datetime import datetime
 
-router = APIRouter(
-    prefix="/admin",
-    tags=["admin"]
-)
+router = APIRouter(prefix="/admin", tags=["Admin"])
 
-@router.post("/publish/top100")
+
+# ─────────────────────────────────────────────
+# Admin key protection
+# ─────────────────────────────────────────────
+def require_admin_key(x_admin_key: str = Header(None)):
+    if x_admin_key != "SECRET_ADMIN_KEY":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+# ─────────────────────────────────────────────
+# Publish Top 100 Chart
+# ─────────────────────────────────────────────
+@router.post(
+    "/publish/top100",
+    dependencies=[Depends(require_admin_key)]
+)
 def publish_top100():
     """
-    Publish Top 100 chart.
-    (DB logic will be added later)
+    Publishes Top 100 chart
+    (stub logic – safe to extend later)
     """
     return {
         "status": "success",
         "chart": "top100",
         "published_at": datetime.utcnow().isoformat()
     }
-
-
-@router.get("/health")
-def admin_health():
-    return {"status": "admin ok"}

@@ -1,3 +1,4 @@
+from api.admin.publish import router as admin_router
 from fastapi import FastAPI
 from .charts.top100 import router as top100_router
 from .admin.publish import router as admin_router
