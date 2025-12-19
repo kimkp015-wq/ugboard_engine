@@ -68,3 +68,20 @@ def publish_top100(payload: PublishTop100):
         "status": "published",
         "count": len(sorted_items)
     }
+    @router.post("/publish/top100/lock")
+def lock_top100():
+    if not os.path.exists("data/top100.json"):
+        raise HTTPException(status_code=404, detail="Top 100 not found")
+
+    with open("data/top100.json", "r") as f:
+        data = json.load(f)
+
+    data["locked"] = True
+
+    with open("data/top100.json", "w") as f:
+        json.dump(data, f, indent=2)
+
+    return {
+        "status": "locked",
+        "week": data.get("week")
+    }
