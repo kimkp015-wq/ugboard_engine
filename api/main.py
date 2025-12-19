@@ -22,3 +22,14 @@ app.include_router(publish_router, prefix="/admin")
 app.include_router(youtube_router, prefix="/ingest")
 app.include_router(radio_router, prefix="/ingest")
 app.include_router(tv_router, prefix="/ingest")
+from fastapi import FastAPI
+
+from api.charts.top100 import router as top100_router
+from api.charts.trending import router as trending_router
+from api.charts.regions import router as regions_router
+
+app = FastAPI()
+
+app.include_router(top100_router)
+app.include_router(trending_router)
+app.include_router(regions_router)
