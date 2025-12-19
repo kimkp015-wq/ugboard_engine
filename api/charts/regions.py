@@ -5,7 +5,7 @@ router = APIRouter()
 @router.get("/regions")
 def get_regions():
     return {
+        "chart": "Regions",
         "status": "ok",
-        "chart": "Regional Charts",
-        "regions": []
+        "data": []
     }
