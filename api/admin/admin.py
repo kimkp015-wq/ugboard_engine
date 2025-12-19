@@ -31,3 +31,10 @@ def check_and_consume_boost():
 
     boost_state["count"] += 1
     return True
+from api.charts.top100 import router as top100_router
+from api.charts.trending import router as trending_router
+from api.charts.regions import router as regions_router
+
+app.include_router(top100_router, prefix="/charts")
+app.include_router(trending_router, prefix="/charts")
+app.include_router(regions_router, prefix="/charts")
