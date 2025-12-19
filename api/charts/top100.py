@@ -9,7 +9,7 @@ YOUTUBE_FILE = "data/youtube.json"
 
 
 @router.get("/charts/top100")
-def get_top100():
+def charts_top100():
     if not os.path.exists(TOP100_FILE):
         return {"status": "ok", "count": 0, "items": []}
 
@@ -21,27 +21,30 @@ def get_top100():
     if os.path.exists(YOUTUBE_FILE):
         with open(YOUTUBE_FILE, "r") as f:
             yt_data = json.load(f)
-            for item in yt_data:
-                key = f"{item['title'].lower()}::{item['artist'].lower()}"
-                youtube_scores[key] = youtube_scores.get(key, 0) + item["score"]
+            for row in yt_data:
+                key = f"{row['title'].lower()}::{row['artist'].lower()}"
+                youtube_scores[key] = youtube_scores.get(key, 0) + row.get("score", 0)
 
-    enriched_items = []
+    enriched = []
 
     for song in top100.get("items", []):
         key = f"{song['title'].lower()}::{song['artist'].lower()}"
-        yt_score = youtube_scores.get(key, 0)
+        yt = youtube_scores.get(key, 0)
 
-        enriched_items.append({
-            **song,
-            "youtube_score": yt_score,
-            "total_score": yt_score
+        enriched.append({
+            "position": song["position"],
+            "title": song["title"],
+            "artist": song["artist"],
+            "youtube": yt,
+            "radio": 0,
+            "tv": 0,
+            "score": yt
         })
 
-    # sort by total score (desc)
-    enriched_items.sort(key=lambda x: x["total_score"], reverse=True)
+    enriched.sort(key=lambda x: x["score"], reverse=True)
 
     return {
         "status": "ok",
-        "count": len(enriched_items),
-        "items": enriched_items
+        "count": len(enriched),
+        "items": enriched
     }
