@@ -7,7 +7,10 @@ app = FastAPI(title="UG Board Engine")
 
 @app.get("/")
 def root():
-    return {"status": "ok", "engine": "ugboard"}
+    return {
+        "status": "ok",
+        "engine": "ugboard"
+    }
 
 # Charts routes
 app.include_router(top100.router, prefix="/charts")
