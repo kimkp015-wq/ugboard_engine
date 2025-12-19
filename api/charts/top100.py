@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 import json
 import os
 
@@ -8,65 +7,57 @@ router = APIRouter()
 DATA_FILE = "data/top100.json"
 
 
-class BoostRequest(BaseModel):
-    position: int
-    points: int
+def calculate_score(youtube: int = 0, radio: int = 0, tv: int = 0) -> float:
+    """
+    Simple weighted scoring system
+    """
+    if youtube < 0 or radio < 0 or tv < 0:
+        raise ValueError("Metrics must be non-negative")
+
+    return (youtube * 0.5) + (radio * 0.3) + (tv * 0.2)
 
 
-@router.get("/charts/top100")
+@router.get("/top100")
 def get_top100():
     if not os.path.exists(DATA_FILE):
-        raise HTTPException(status_code=404, detail="Top 100 not published")
+        return {
+            "status": "ok",
+            "count": 0,
+            "items": []
+        }
 
     with open(DATA_FILE, "r") as f:
         data = json.load(f)
 
-    items = data.get("items", [])
-
-    boosted = data.get("boosts", {})
-
+    songs = data.get("items", [])
     scored_items = []
-    for item in items:
-        position = item["position"]
-        base_score = 101 - position
-        boost = boosted.get(str(position), 0)
+
+    for song in songs:
+        score = calculate_score(
+            youtube=song.get("youtube", 0),
+            radio=song.get("radio", 0),
+            tv=song.get("tv", 0),
+        )
 
         scored_items.append({
-            **item,
-            "base_score": base_score,
-            "boost": boost,
-            "score": base_score + boost
+            "position": song.get("position"),
+            "title": song.get("title"),
+            "artist": song.get("artist"),
+            "score": score,
+            "youtube": song.get("youtube", 0),
+            "radio": song.get("radio", 0),
+            "tv": song.get("tv", 0),
         })
+
+    # 🔥 SORT BY SCORE (HIGHEST FIRST)
+    scored_items = sorted(scored_items, key=lambda x: x["score"], reverse=True)
+
+    # 🔥 REASSIGN POSITIONS
+    for i, item in enumerate(scored_items, start=1):
+        item["position"] = i
 
     return {
         "status": "ok",
         "count": len(scored_items),
         "items": scored_items
-    }
-
-
-@router.post("/charts/top100/boost")
-def boost_song(payload: BoostRequest):
-    if not os.path.exists(DATA_FILE):
-        raise HTTPException(status_code=404, detail="Top 100 not published")
-
-    if payload.points <= 0:
-        raise HTTPException(status_code=400, detail="Boost points must be positive")
-
-    with open(DATA_FILE, "r") as f:
-        data = json.load(f)
-
-    boosts = data.get("boosts", {})
-    boosts[str(payload.position)] = boosts.get(str(payload.position), 0) + payload.points
-
-    data["boosts"] = boosts
-
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-    return {
-        "status": "boosted",
-        "position": payload.position,
-        "added_points": payload.points,
-        "total_boost": boosts[str(payload.position)]
     }
