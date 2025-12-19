@@ -3,14 +3,9 @@ from fastapi import APIRouter
 router = APIRouter()
 
 @router.get("/regions")
-def build_regions():
+def get_regions():
     return {
         "status": "ok",
-        "type": "regions",
-        "data": [
-            {"region": "Central", "top_song": "Sample Song A"},
-            {"region": "Eastern", "top_song": "Sample Song B"},
-            {"region": "Northern", "top_song": "Sample Song C"},
-            {"region": "Western", "top_song": "Sample Song D"}
-        ]
+        "chart": "Regional Charts",
+        "regions": []
     }
