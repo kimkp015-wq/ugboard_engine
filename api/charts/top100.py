@@ -1,16 +1,22 @@
-from fastapi import APIRouter, HTTPException
-from typing import List
+from fastapi import APIRouter
 
 router = APIRouter()
 
-@router.get("/top100", response_model=List[dict])
+@router.get("/top100")
 def get_top_100():
-    try:
-        # TEMP SAFE RESPONSE (until DB confirmed)
-        return [
-            {"rank": 1, "title": "Sample Song", "artist": "Sample Artist"},
-            {"rank": 2, "title": "Another Song", "artist": "Another Artist"}
-        ]
+    songs = []
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Temporary deterministic Top 100 (safe mode)
+    for i in range(1, 101):
+        songs.append({
+            "rank": i,
+            "title": f"UG Song {i}",
+            "artist": "Ugandan Artist",
+            "score": round(100 - (i * 0.5), 2)
+        })
+
+    return {
+        "chart": "UG Board Top 100",
+        "count": len(songs),
+        "data": songs
+    }
