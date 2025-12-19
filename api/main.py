@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from api.admin.reset import router as reset_router
 from api.ingestion import tv
 # Admin
 from api.admin import admin, publish
@@ -11,6 +12,7 @@ from api.charts import top100, trending, regions, boost
 from api.ingestion import radio, youtube
 
 app = FastAPI(
+app.include_router(reset_router)
     title="UG Board Engine",
     version="1.0.0"
 )
