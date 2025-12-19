@@ -7,8 +7,13 @@ import os
 
 router = APIRouter()
 
-DATA_FILE = "data/top100.json"
+DATA_DIR = "data"
+DATA_FILE = os.path.join(DATA_DIR, "top100.json")
 
+
+# -----------------------
+# MODELS
+# -----------------------
 
 class Top100Item(BaseModel):
     position: int
@@ -49,16 +54,20 @@ class PublishTop100(BaseModel):
         return items
 
 
+# -----------------------
+# ROUTES
+# -----------------------
+
 @router.post("/publish/top100")
 def publish_top100(payload: PublishTop100):
-    os.makedirs("data", exist_ok=True)
+    os.makedirs(DATA_DIR, exist_ok=True)
 
-    # sort by position (1 → 100)
     sorted_items = sorted(payload.items, key=lambda x: x.position)
 
     data = {
         "updated_at": datetime.utcnow().isoformat(),
-        "items": [item.model_dump() for item in sorted_items]
+        "locked": False,
+        "items": [item.model_dump() for item in sorted_items],
     }
 
     with open(DATA_FILE, "w") as f:
@@ -66,23 +75,24 @@ def publish_top100(payload: PublishTop100):
 
     return {
         "status": "published",
-        "count": len(sorted_items)
+        "count": len(sorted_items),
     }
-    @router.post("/publish/top100/lock")
+
+
+@router.post("/publish/top100/lock")
 def lock_top100():
-    if not os.path.exists("data/top100.json"):
+    if not os.path.exists(DATA_FILE):
         raise HTTPException(status_code=404, detail="Top 100 not found")
 
-    with open("data/top100.json", "r") as f:
+    with open(DATA_FILE, "r") as f:
         data = json.load(f)
 
     data["locked"] = True
+    data["locked_at"] = datetime.utcnow().isoformat()
 
-    with open("data/top100.json", "w") as f:
+    with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
     return {
         "status": "locked",
-        "week": week,
-        "archived": True
     }
