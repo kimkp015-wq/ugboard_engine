@@ -1,40 +1,23 @@
 from fastapi import FastAPI
 
+# existing routers
+from api.charts.top100 import router as top100_router
+from api.charts.trending import router as trending_router
+from api.charts.regions import router as regions_router
+from api.charts.boost import router as boost_router
+
+from api.admin.admin import router as admin_router
+from api.admin.publish import router as publish_router
 from api.admin.reset import router as reset_router
-from api.ingestion import tv
-# Admin
-from api.admin import admin, publish
 
-# Charts
-from api.charts import top100, trending, regions, boost
+app = FastAPI(title="UgBoard Engine")
 
-# Ingestion (IMPORTANT: folder is ingestion)
-from api.ingestion import radio, youtube
+# ---- include routers ----
+app.include_router(top100_router)
+app.include_router(trending_router)
+app.include_router(regions_router)
+app.include_router(boost_router)
 
-app = FastAPI(
+app.include_router(admin_router)
+app.include_router(publish_router)
 app.include_router(reset_router)
-    title="UG Board Engine",
-    version="1.0.0"
-)
-
-# ---- ADMIN ROUTES ----
-app.include_router(admin.router, prefix="/admin", tags=["Admin"])
-app.include_router(publish.router, prefix="/admin", tags=["Admin Publish"])
-
-# ---- CHART ROUTES ----
-app.include_router(top100.router, prefix="/charts", tags=["Charts"])
-app.include_router(trending.router, prefix="/charts", tags=["Charts"])
-app.include_router(regions.router, prefix="/charts", tags=["Charts"])
-app.include_router(boost.router, prefix="/charts", tags=["Charts"])
-
-# ---- INGESTION ROUTES ----
-app.include_router(radio.router, tags=["Ingestion"])
-app.include_router(youtube.router, tags=["Ingestion"])
-app.include_router(tv.router)
-
-@app.get("/")
-def root():
-    return {
-        "engine": "UG Board",
-        "status": "running"
-    }
