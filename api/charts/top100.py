@@ -1,21 +1,21 @@
 from fastapi import APIRouter
 
-router = APIRouter(prefix="/charts", tags=["Charts"])
-
+router = APIRouter()
 
 @router.get("/top100")
-def top_100():
+def top_100_chart():
     songs = []
 
     for i in range(1, 101):
         songs.append({
             "rank": i,
             "title": f"Song {i}",
-            "artist": f"Artist {i}"
+            "artist": "Ugandan Artist",
+            "score": 100 - i
         })
 
     return {
-        "status": "ok",
-        "count": len(songs),
-        "data": songs
+        "chart": "UG Top 100",
+        "total": len(songs),
+        "songs": songs
     }
