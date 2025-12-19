@@ -1,3 +1,4 @@
+from api.ingestion import youtube
 from api.ingestion import radio
 from fastapi import FastAPI
 from api.charts import top100, trending, regions
@@ -15,3 +16,5 @@ app.include_router(regions.router, prefix="/charts")
 
 app.include_router(admin.router, prefix="/admin")
 app.include_router(publish.router, prefix="/admin")
+app.include_router(charts.router)
+app.include_router(admin.router)
