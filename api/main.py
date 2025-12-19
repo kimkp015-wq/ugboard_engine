@@ -1,3 +1,4 @@
+from api.ingestion import radio
 from fastapi import FastAPI
 from api.charts import top100, trending, regions
 from api.admin import admin, publish
