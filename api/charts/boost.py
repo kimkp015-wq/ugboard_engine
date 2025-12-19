@@ -41,8 +41,7 @@ def rebuild_top100(boosts):
     scores = {}
 
     for b in boosts:
-        key = f"{b['title']}|{b['artist']}"
-        scores.setdefault(key, {
+key = b["title"] + "|" + b["artist"]
             "title": b["title"],
             "artist": b["artist"],
             "score": 0
