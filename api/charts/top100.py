@@ -25,7 +25,6 @@ def get_top100():
         item.get("radio", 0) * 2 +
         item.get("tv", 0) * 1
     )
-        }
 
     with open(DATA_FILE, "r") as f:
         data = json.load(f)
@@ -61,4 +60,3 @@ def get_top100():
         "status": "ok",
         "count": len(scored_items),
         "items": scored_items[:100]
-    }
