@@ -1,27 +1,16 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from typing import List
 
 router = APIRouter()
 
-
-def calculate_score(rank: int) -> int:
-    return 1000 - (rank * 5)
-
-
-@router.get("/top100")
+@router.get("/top100", response_model=List[dict])
 def get_top_100():
-    songs = []
+    try:
+        # TEMP SAFE RESPONSE (until DB confirmed)
+        return [
+            {"rank": 1, "title": "Sample Song", "artist": "Sample Artist"},
+            {"rank": 2, "title": "Another Song", "artist": "Another Artist"}
+        ]
 
-    for i in range(1, 101):
-        songs.append({
-            "rank": i,
-            "title": f"Song {i}",
-            "artist": "Ugandan Artist",
-            "score": calculate_score(i)
-        })
-
-    return {
-        "status": "ok",
-        "chart": "UG Top 100",
-        "total": len(songs),
-        "data": songs
-    }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
