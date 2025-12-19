@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from api.ingestion import tv
 # Admin
 from api.admin import admin, publish
 
@@ -27,7 +28,7 @@ app.include_router(boost.router, prefix="/charts", tags=["Charts"])
 # ---- INGESTION ROUTES ----
 app.include_router(radio.router, tags=["Ingestion"])
 app.include_router(youtube.router, tags=["Ingestion"])
-
+app.include_router(tv.router)
 
 @app.get("/")
 def root():
