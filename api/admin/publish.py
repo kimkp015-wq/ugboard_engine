@@ -83,5 +83,6 @@ def lock_top100():
 
     return {
         "status": "locked",
-        "week": data.get("week")
+        "week": week,
+        "archived": True
     }
