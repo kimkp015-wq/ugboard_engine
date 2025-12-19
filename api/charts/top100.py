@@ -1,22 +1,19 @@
-from fastapi import APIRouter
+import json
+import os
+from fastapi import APIRouter, HTTPException
 
-router = APIRouter()
+router = APIRouter(prefix="/charts", tags=["Charts"])
+
+DATA_PATH = "data/top100.json"
+
 
 @router.get("/top100")
-def get_top_100():
-    songs = []
+def get_top100():
+    if not os.path.exists(DATA_PATH):
+        raise HTTPException(
+            status_code=404,
+            detail="Top 100 not published yet"
+        )
 
-    # Temporary deterministic Top 100 (safe mode)
-    for i in range(1, 101):
-        songs.append({
-            "rank": i,
-            "title": f"UG Song {i}",
-            "artist": "Ugandan Artist",
-            "score": round(100 - (i * 0.5), 2)
-        })
-
-    return {
-        "chart": "UG Board Top 100",
-        "count": len(songs),
-        "data": songs
-    }
+    with open(DATA_PATH, "r") as f:
+        return json.load(f)
