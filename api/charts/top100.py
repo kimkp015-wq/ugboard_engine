@@ -19,10 +19,12 @@ def calculate_score(youtube: int, radio: int, tv: int) -> int:
 @router.get("/top100")
 def get_top100():
     if not os.path.exists(DATA_FILE):
-        return {
-            "status": "ok",
-            "count": 0,
-            "items": []
+        def calculate_score(item):
+    return (
+        item.get("youtube", 0) * 3 +
+        item.get("radio", 0) * 2 +
+        item.get("tv", 0) * 1
+    )
         }
 
     with open(DATA_FILE, "r") as f:
