@@ -1,60 +1,62 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, field_validator
-from datetime import datetime
+from fastapi import APIRouter
 import json
 import os
+from datetime import datetime
 
 router = APIRouter()
 
-DATA_FILE = "data/youtube.json"
+YOUTUBE_FILE = "data/youtube.json"
 
 
-class YouTubeIngest(BaseModel):
-    title: str
-    artist: str
-    views: int
+@router.post("/ingestion/youtube")
+def ingest_youtube(payload: dict):
+    """
+    Expected payload example:
+    {
+      "title": "Test Song",
+      "artist": "Test Artist",
+      "views": 12000
+    }
+    """
 
-    @field_validator("title", "artist")
-    @classmethod
-    def not_empty(cls, v):
-        if not v or not v.strip():
-            raise ValueError("title and artist cannot be empty")
-        return v.strip()
+    title = payload.get("title")
+    artist = payload.get("artist")
+    views = payload.get("views", 0)
 
-    @field_validator("views")
-    @classmethod
-    def views_positive(cls, v):
-        if v < 0:
-            raise ValueError("views must be positive")
-        return v
+    if not title or not artist:
+        return {"status": "error", "detail": "title and artist required"}
 
-
-@router.post("/ingest/youtube")
-def ingest_youtube(payload: YouTubeIngest):
     os.makedirs("data", exist_ok=True)
 
-    # simple scoring rule (safe & free)
-    score = payload.views // 1000  # 1 point per 1,000 views
-
-    entry = {
-        "title": payload.title,
-        "artist": payload.artist,
-        "views": payload.views,
-        "score": score,
-        "ingested_at": datetime.utcnow().isoformat()
-    }
-
-    data = []
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
+    if os.path.exists(YOUTUBE_FILE):
+        with open(YOUTUBE_FILE, "r") as f:
             data = json.load(f)
+    else:
+        data = {"updated_at": None, "items": []}
 
-    data.append(entry)
+    # Update or insert
+    found = False
+    for item in data["items"]:
+        if item["title"] == title and item["artist"] == artist:
+            item["views"] += int(views)
+            found = True
+            break
 
-    with open(DATA_FILE, "w") as f:
+    if not found:
+        data["items"].append({
+            "title": title,
+            "artist": artist,
+            "views": int(views)
+        })
+
+    data["updated_at"] = datetime.utcnow().isoformat()
+
+    with open(YOUTUBE_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
     return {
         "status": "ok",
-        "score_added": score
+        "title": title,
+        "artist": artist,
+        "views_added": views
     }

@@ -1,5 +1,8 @@
 from fastapi import FastAPI
 
+from api.ingestion.youtube import router as youtube_router
+
+app.include_router(youtube_router, tags=["ingestion"])
 from api.charts.top100 import router as top100_router
 # Charts
 from api.charts.top100 import router as top100_router
