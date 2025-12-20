@@ -1,76 +1,69 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import json
 import os
 
-from api.scoring.scoring import calculate_score
-
-router = APIRouter(prefix="/radio", tags=["ingestion"])
+router = APIRouter()
 
 
 class RadioIngest(BaseModel):
     title: str
     artist: str
-    plays: int = 1
+    plays: int = Field(ge=0)
 
 
-def resolve_top100_path():
+def resolve_radio_path():
     candidates = [
-        "api/data/top100.json",
-        "data/top100.json",
-        "ingestion/top100.json",
-        "/app/api/data/top100.json",
-        "/app/data/top100.json",
-        "/app/ingestion/top100.json",
+        "api/data/radio.json",
+        "data/radio.json",
+        "ingestion/radio.json",
+        "/app/api/data/radio.json",
+        "/app/data/radio.json",
+        "/app/ingestion/radio.json",
     ]
 
     for path in candidates:
-        if os.path.exists(path):
-            return path
+        dir_name = os.path.dirname(path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+        return path  # first writable path
 
-    return None
 
-
-@router.post("")
+@router.post("/radio")
 def ingest_radio(payload: RadioIngest):
-    path = resolve_top100_path()
+    path = resolve_radio_path()
 
-    if not path:
-        raise HTTPException(status_code=500, detail="Top100 file not found")
+    # Load existing data safely
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+        except Exception:
+            data = {"items": []}
+    else:
+        data = {"items": []}
 
-    try:
-        with open(path, "r") as f:
-            data = json.load(f)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Failed to read Top100")
+    if "items" not in data or not isinstance(data["items"], list):
+        data["items"] = []
 
-    items = data.get("items", [])
-    updated = False
+    # Append new signal
+    data["items"].append({
+        "title": payload.title.strip(),
+        "artist": payload.artist.strip(),
+        "plays": payload.plays
+    })
 
-    for item in items:
-        if (
-            item.get("title") == payload.title
-            and item.get("artist") == payload.artist
-        ):
-            item["radio"] = int(item.get("radio", 0)) + payload.plays
-            item["score"] = calculate_score(item)
-            updated = True
-            break
-
-    if not updated:
-        raise HTTPException(status_code=404, detail="Song not found in Top100")
-
-    data["items"] = items
-
+    # Write safely
     try:
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Failed to write Top100")
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to write radio ingestion file: {str(e)}"
+        )
 
     return {
         "status": "ok",
-        "message": "Radio plays added",
-        "title": payload.title,
-        "artist": payload.artist,
+        "ingested": 1
     }
