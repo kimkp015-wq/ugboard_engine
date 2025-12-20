@@ -1,51 +1,16 @@
-from fastapi import APIRouter, HTTPException
-import json
-import os
-
-# Optional boost import (safe)
-try:
-    from api.charts.boost import apply_boosts
-except Exception:
-    apply_boosts = None
-
-router = APIRouter()
-
-
-def resolve_top100_path():
-    candidates = [
-        "api/data/top100.json",
-        "data/top100.json",
-        "ingestion/top100.json",
-        "/app/api/data/top100.json",
-        "/app/data/top100.json",
-        "/app/ingestion/top100.json",
-    ]
-
-    for path in candidates:
-        if os.path.exists(path):
-            return path
-
-    return None
-
-
-@router.get("/top100")
-def get_top100():
+@router.post("/top100/recalculate")
+def recalculate_top100():
     path = resolve_top100_path()
 
     if not path:
         raise HTTPException(
             status_code=500,
-            detail="Top100 file not found in any known location"
+            detail="Top100 file not found"
         )
 
     try:
         with open(path, "r") as f:
             data = json.load(f)
-    except json.JSONDecodeError as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Top100 JSON is invalid: {str(e)}"
-        )
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -57,17 +22,17 @@ def get_top100():
     if not isinstance(items, list):
         raise HTTPException(
             status_code=500,
-            detail="Top100 items must be a list"
+            detail="Invalid Top100 format"
         )
 
-    # Apply boosts safely (optional)
+    # Apply boosts if available
     if apply_boosts:
         try:
             items = apply_boosts(items)
         except Exception:
             pass
 
-    # -------- STEP 2C: SORT BY SCORE --------
+    # Sort by score
     def score_value(item):
         try:
             return float(item.get("score", 0))
@@ -76,12 +41,23 @@ def get_top100():
 
     items = sorted(items, key=score_value, reverse=True)
 
-    # Reassign positions after sorting
+    # Reassign positions
     for index, item in enumerate(items, start=1):
         item["position"] = index
 
+    # Write back safely
+    data["items"] = items
+
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to write Top100 file: {str(e)}"
+        )
+
     return {
-        "status": "ok",
-        "count": len(items),
-        "items": items
+        "status": "recalculated",
+        "count": len(items)
     }
