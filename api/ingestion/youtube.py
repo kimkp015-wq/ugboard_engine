@@ -6,87 +6,110 @@ import os
 
 router = APIRouter()
 
-TOP100_PATH = "api/data/top100.json"
-
 
 # ---------- MODELS ----------
 
-class YoutubeItem(BaseModel):
+class YouTubeItem(BaseModel):
     title: str
     artist: str
     views: int
 
 
-class BulkYoutubePayload(BaseModel):
-    items: List[YoutubeItem]
+class YouTubeBulk(BaseModel):
+    items: List[YouTubeItem]
+
+
+# ---------- FILE RESOLUTION ----------
+
+def resolve_top100_path():
+    candidates = [
+        "api/data/top100.json",
+        "data/top100.json",
+        "ingestion/top100.json",
+        "/app/api/data/top100.json",
+        "/app/data/top100.json",
+        "/app/ingestion/top100.json",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
 
 
 # ---------- HELPERS ----------
 
-def load_top100():
-    if not os.path.exists(TOP100_PATH):
-        return {"items": []}
-
-    with open(TOP100_PATH, "r") as f:
+def load_top100(path):
+    with open(path, "r") as f:
         return json.load(f)
 
 
-def save_top100(data):
-    with open(TOP100_PATH, "w") as f:
+def save_top100(path, data):
+    with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
 
-def ingest_one(item: YoutubeItem, data):
-    for song in data["items"]:
-        if song["title"] == item.title and song["artist"] == item.artist:
-            song["youtube"] = song.get("youtube", 0) + item.views
-            return
-
-    # If song not found, create it
-    data["items"].append({
-        "title": item.title,
-        "artist": item.artist,
-        "youtube": item.views,
-        "radio": 0,
-        "tv": 0,
-        "score": 0
-    })
+def find_song(items, title, artist):
+    for item in items:
+        if (
+            item.get("title") == title
+            and item.get("artist") == artist
+        ):
+            return item
+    return None
 
 
 # ---------- ROUTE ----------
 
-@router.post("/ingest/youtube")
-def ingest_youtube(payload: dict):
-    data = load_top100()
+@router.post("/youtube")
+def ingest_youtube(payload: Optional[YouTubeBulk] = None):
+    """
+    Accepts:
+    - Single item
+    - Bulk items under { "items": [...] }
+    """
 
-    # BULK MODE
-    if "items" in payload:
-        if not isinstance(payload["items"], list):
-            raise HTTPException(status_code=400, detail="items must be a list")
+    path = resolve_top100_path()
+    if not path:
+        raise HTTPException(status_code=500, detail="Top100 file not found")
 
-        for raw in payload["items"]:
-            item = YoutubeItem(**raw)
-            ingest_one(item, data)
+    data = load_top100(path)
+    items = data.get("items", [])
 
-        save_top100(data)
+    if not isinstance(items, list):
+        items = []
 
-        return {
-            "status": "ok",
-            "ingested": len(payload["items"]),
-            "mode": "bulk"
-        }
+    # Normalize payload
+    if payload is None or not payload.items:
+        raise HTTPException(
+            status_code=422,
+            detail="Body must contain { items: [...] }"
+        )
 
-    # SINGLE MODE
-    try:
-        item = YoutubeItem(**payload)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    ingested = 0
 
-    ingest_one(item, data)
-    save_top100(data)
+    for entry in payload.items:
+        song = find_song(items, entry.title, entry.artist)
+
+        if song:
+            # Update existing
+            song["youtube"] = song.get("youtube", 0) + entry.views
+        else:
+            # Create new
+            items.append({
+                "title": entry.title,
+                "artist": entry.artist,
+                "youtube": entry.views,
+                "radio": 0,
+                "tv": 0,
+                "score": 0
+            })
+
+        ingested += 1
+
+    data["items"] = items
+    save_top100(path, data)
 
     return {
         "status": "ok",
-        "ingested": 1,
-        "mode": "single"
+        "ingested": ingested
     }
