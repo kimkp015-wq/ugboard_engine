@@ -4,42 +4,29 @@ import os
 
 router = APIRouter()
 
-# Absolute path (this is the key fix)
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Absolute path to api/data/top100.json
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # api/
 DATA_FILE = os.path.join(BASE_DIR, "data", "top100.json")
 
 
-@router.get("/charts/top100")
+@router.get("/top100")
 def get_top100():
-    # 1. Check file exists
     if not os.path.exists(DATA_FILE):
         raise HTTPException(
-            status_code=404,
+            status_code=500,
             detail=f"Top100 file not found at {DATA_FILE}"
         )
 
-    # 2. Read file safely
     try:
         with open(DATA_FILE, "r") as f:
             data = json.load(f)
-    except json.JSONDecodeError as e:
+    except Exception:
         raise HTTPException(
             status_code=500,
-            detail=f"Invalid JSON in top100.json: {str(e)}"
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Unexpected error reading top100.json: {str(e)}"
+            detail="Failed to read Top 100 data"
         )
 
-    # 3. Validate structure
     items = data.get("items", [])
-    if not isinstance(items, list):
-        raise HTTPException(
-            status_code=500,
-            detail="Invalid data format: items is not a list"
-        )
 
     return {
         "status": "ok",
