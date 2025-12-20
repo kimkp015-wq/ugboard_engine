@@ -1,21 +1,40 @@
 import json
 import os
 
-DATA_FILE = "ingestion/top100.json"
+TOP100_PATHS = [
+    "api/data/top100.json",
+    "data/top100.json",
+    "/app/api/data/top100.json",
+    "/app/data/top100.json",
+]
 
 
-def load_items():
-    if not os.path.exists(DATA_FILE):
-        return []
-
-    with open(DATA_FILE, "r") as f:
-        data = json.load(f)
-
-    return data.get("items", [])
+def resolve_top100_path():
+    for path in TOP100_PATHS:
+        if os.path.exists(path):
+            return path
+    return None
 
 
-def save_items(items):
-    os.makedirs("ingestion", exist_ok=True)
+def load_top100():
+    path = resolve_top100_path()
+    if not path:
+        return {"items": []}
 
-    with open(DATA_FILE, "w") as f:
-        json.dump({"items": items}, f, indent=2)
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {"items": []}
+
+
+def save_top100(data: dict):
+    path = resolve_top100_path()
+
+    # If file doesn't exist yet, create it in data/
+    if not path:
+        path = "data/top100.json"
+        os.makedirs("data", exist_ok=True)
+
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
