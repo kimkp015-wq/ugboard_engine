@@ -21,7 +21,9 @@ def root():
         "status": "ok",
         "engine": "ugboard"
     }
+from api.charts import trending
 
+app.include_router(trending.router, prefix="/charts", tags=["Charts"])
 
 # Charts routes
 app.include_router(top100_router)
