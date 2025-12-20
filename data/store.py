@@ -18,7 +18,7 @@ def resolve_data_path():
     return None
 
 
-def load_items():
+def load_top100():
     path = resolve_data_path()
     if not path:
         return []
@@ -31,11 +31,10 @@ def load_items():
         return []
 
 
-def save_items(items):
+def save_top100(items):
     path = resolve_data_path()
 
     if not path:
-        # create default location
         path = "data/top100.json"
         os.makedirs("data", exist_ok=True)
 
@@ -44,3 +43,14 @@ def save_items(items):
             json.dump({"items": items}, f, indent=2)
     except Exception:
         pass
+
+
+# --- BACKWARD COMPATIBILITY (VERY IMPORTANT) ---
+# These aliases prevent future import crashes
+
+def load_items():
+    return load_top100()
+
+
+def save_items(items):
+    save_top100(items)
