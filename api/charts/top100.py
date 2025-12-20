@@ -28,6 +28,7 @@ def resolve_top100_path():
 
 @router.get("/top100")
 def get_top100():
+    # ✅ FIXED FUNCTION NAME
     path = resolve_top100_path()
 
     if not path:
@@ -37,7 +38,7 @@ def get_top100():
         )
 
     try:
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
         raise HTTPException(
