@@ -1,69 +1,92 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from typing import List, Optional
 import json
 import os
 
 router = APIRouter()
 
+TOP100_PATH = "api/data/top100.json"
 
-class RadioIngest(BaseModel):
+
+# ---------- MODELS ----------
+
+class YoutubeItem(BaseModel):
     title: str
     artist: str
-    plays: int = Field(ge=0)
+    views: int
 
 
-def resolve_radio_path():
-    candidates = [
-        "api/data/radio.json",
-        "data/radio.json",
-        "ingestion/radio.json",
-        "/app/api/data/radio.json",
-        "/app/data/radio.json",
-        "/app/ingestion/radio.json",
-    ]
-
-    for path in candidates:
-        dir_name = os.path.dirname(path)
-        if dir_name:
-            os.makedirs(dir_name, exist_ok=True)
-        return path  # first writable path
+class BulkYoutubePayload(BaseModel):
+    items: List[YoutubeItem]
 
 
-@router.post("/radio")
-def ingest_radio(payload: RadioIngest):
-    path = resolve_radio_path()
+# ---------- HELPERS ----------
 
-    # Load existing data safely
-    if os.path.exists(path):
-        try:
-            with open(path, "r") as f:
-                data = json.load(f)
-        except Exception:
-            data = {"items": []}
-    else:
-        data = {"items": []}
+def load_top100():
+    if not os.path.exists(TOP100_PATH):
+        return {"items": []}
 
-    if "items" not in data or not isinstance(data["items"], list):
-        data["items"] = []
+    with open(TOP100_PATH, "r") as f:
+        return json.load(f)
 
-    # Append new signal
+
+def save_top100(data):
+    with open(TOP100_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def ingest_one(item: YoutubeItem, data):
+    for song in data["items"]:
+        if song["title"] == item.title and song["artist"] == item.artist:
+            song["youtube"] = song.get("youtube", 0) + item.views
+            return
+
+    # If song not found, create it
     data["items"].append({
-        "title": payload.title.strip(),
-        "artist": payload.artist.strip(),
-        "plays": payload.plays
+        "title": item.title,
+        "artist": item.artist,
+        "youtube": item.views,
+        "radio": 0,
+        "tv": 0,
+        "score": 0
     })
 
-    # Write safely
+
+# ---------- ROUTE ----------
+
+@router.post("/ingest/youtube")
+def ingest_youtube(payload: dict):
+    data = load_top100()
+
+    # BULK MODE
+    if "items" in payload:
+        if not isinstance(payload["items"], list):
+            raise HTTPException(status_code=400, detail="items must be a list")
+
+        for raw in payload["items"]:
+            item = YoutubeItem(**raw)
+            ingest_one(item, data)
+
+        save_top100(data)
+
+        return {
+            "status": "ok",
+            "ingested": len(payload["items"]),
+            "mode": "bulk"
+        }
+
+    # SINGLE MODE
     try:
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2)
+        item = YoutubeItem(**payload)
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to write radio ingestion file: {str(e)}"
-        )
+        raise HTTPException(status_code=422, detail=str(e))
+
+    ingest_one(item, data)
+    save_top100(data)
 
     return {
         "status": "ok",
-        "ingested": 1
+        "ingested": 1,
+        "mode": "single"
     }

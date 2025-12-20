@@ -1,69 +1,92 @@
-from fastapi import APIRouter
-from pydantic import BaseModel, field_validator
-from datetime import datetime
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional
 import json
 import os
 
 router = APIRouter()
 
-TV_FILE = "data/tv.json"
-BOOST_FILE = "data/boost.json"
-
-TV_WEIGHT = 4  # TV impact (between radio and youtube)
+TOP100_PATH = "api/data/top100.json"
 
 
-class TVPlay(BaseModel):
+# ---------- MODELS ----------
+
+class YoutubeItem(BaseModel):
     title: str
     artist: str
-    plays: int
-
-    @field_validator("plays")
-    @classmethod
-    def positive(cls, v):
-        if v <= 0:
-            raise ValueError("plays must be positive")
-        return v
+    views: int
 
 
-def load_json(path):
-    if not os.path.exists(path):
-        return []
-    with open(path, "r") as f:
+class BulkYoutubePayload(BaseModel):
+    items: List[YoutubeItem]
+
+
+# ---------- HELPERS ----------
+
+def load_top100():
+    if not os.path.exists(TOP100_PATH):
+        return {"items": []}
+
+    with open(TOP100_PATH, "r") as f:
         return json.load(f)
 
 
-def save_json(path, data):
-    os.makedirs("data", exist_ok=True)
-    with open(path, "w") as f:
+def save_top100(data):
+    with open(TOP100_PATH, "w") as f:
         json.dump(data, f, indent=2)
 
 
-@router.post("/ingest/tv")
-def ingest_tv(payload: TVPlay):
-    tv = load_json(TV_FILE)
-    boosts = load_json(BOOST_FILE)
+def ingest_one(item: YoutubeItem, data):
+    for song in data["items"]:
+        if song["title"] == item.title and song["artist"] == item.artist:
+            song["youtube"] = song.get("youtube", 0) + item.views
+            return
 
-    tv.append({
-        "title": payload.title,
-        "artist": payload.artist,
-        "plays": payload.plays,
-        "time": datetime.utcnow().isoformat()
+    # If song not found, create it
+    data["items"].append({
+        "title": item.title,
+        "artist": item.artist,
+        "youtube": item.views,
+        "radio": 0,
+        "tv": 0,
+        "score": 0
     })
 
-    boosts.append({
-        "title": payload.title,
-        "artist": payload.artist,
-        "points": payload.plays * TV_WEIGHT,
-        "source": "tv",
-        "time": datetime.utcnow().isoformat()
-    })
 
-    save_json(TV_FILE, tv)
-    save_json(BOOST_FILE, boosts)
+# ---------- ROUTE ----------
+
+@router.post("/ingest/youtube")
+def ingest_youtube(payload: dict):
+    data = load_top100()
+
+    # BULK MODE
+    if "items" in payload:
+        if not isinstance(payload["items"], list):
+            raise HTTPException(status_code=400, detail="items must be a list")
+
+        for raw in payload["items"]:
+            item = YoutubeItem(**raw)
+            ingest_one(item, data)
+
+        save_top100(data)
+
+        return {
+            "status": "ok",
+            "ingested": len(payload["items"]),
+            "mode": "bulk"
+        }
+
+    # SINGLE MODE
+    try:
+        item = YoutubeItem(**payload)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    ingest_one(item, data)
+    save_top100(data)
 
     return {
-        "status": "tv ingested",
-        "title": payload.title,
-        "artist": payload.artist,
-        "points_added": payload.plays * TV_WEIGHT
+        "status": "ok",
+        "ingested": 1,
+        "mode": "single"
     }
