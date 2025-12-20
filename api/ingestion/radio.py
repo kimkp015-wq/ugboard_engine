@@ -1,8 +1,9 @@
+from api.scoring.scoring import recalculate_all
 from fastapi import APIRouter
 from typing import List, Union
 from pydantic import BaseModel
 
-from store import load_items, save_items
+from store import load_itemsitems = recalculate_all(items), save_items
 
 router = APIRouter()
 
