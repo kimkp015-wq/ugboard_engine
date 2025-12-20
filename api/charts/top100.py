@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from api.charts.boost import apply_boosts
 import json
 import os
 
@@ -8,7 +9,7 @@ router = APIRouter()
 def resolve_top100_path():
     """
     Try all known valid locations.
-    This avoids Railway path issues.
+    Works locally and on Railway.
     """
     candidates = [
         "api/data/top100.json",
@@ -46,6 +47,9 @@ def get_top100():
         )
 
     items = data.get("items", [])
+
+    # ✅ APPLY BOOSTS HERE (SAFE LOCATION)
+    items = apply_boosts(items)
 
     return {
         "status": "ok",

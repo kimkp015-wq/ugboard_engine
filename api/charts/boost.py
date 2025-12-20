@@ -1,94 +1,44 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, field_validator
-from datetime import datetime
 import json
 import os
 
-router = APIRouter()
-
-BOOST_FILE = "data/boost.json"
-TOP100_FILE = "data/top100.json"
-
-
-class BoostRequest(BaseModel):
-    title: str
-    artist: str
-    points: int
-
-    @field_validator("points")
-    @classmethod
-    def positive_points(cls, v):
-        if v <= 0:
-            raise ValueError("boost points must be positive")
-        return v
+BOOST_FILE = "data/boosts.json"
 
 
 def load_boosts():
     if not os.path.exists(BOOST_FILE):
         return []
-    with open(BOOST_FILE, "r") as f:
-        return json.load(f)
+
+    try:
+        with open(BOOST_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return []
 
 
-def save_boosts(data):
-    os.makedirs("data", exist_ok=True)
-    with open(BOOST_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-
-def rebuild_top100(boosts):
-    # group by song
-    scores = {}
-
-    for b in boosts:
-key = b["title"] + "|" + b["artist"]
-            "title": b["title"],
-            "artist": b["artist"],
-            "score": 0
-        })
-        scores[key]["score"] += b["points"]
-
-    # sort by score
-    ranked = sorted(scores.values(), key=lambda x: x["score"], reverse=True)
-
-    items = []
-    for idx, song in enumerate(ranked[:100], start=1):
-        items.append({
-            "position": idx,
-            "title": song["title"],
-            "artist": song["artist"],
-            "score": song["score"]
-        })
-
-    data = {
-        "updated_at": datetime.utcnow().isoformat(),
-        "count": len(items),
-        "items": items
-    }
-
-    with open(TOP100_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-
-@router.post("/boost")
-def boost_song(payload: BoostRequest):
+def apply_boosts(items):
     boosts = load_boosts()
 
-    boosts.append({
-        "title": payload.title,
-        "artist": payload.artist,
-        "points": payload.points,
-        "time": datetime.utcnow().isoformat()
-    })
+    if not boosts:
+        return items
 
-    save_boosts(boosts)
+    boost_map = {}
 
-    # 🔥 THIS IS THE IMPORTANT PART
-    rebuild_top100(boosts)
+    for b in boosts:
+        title = b.get("title")
+        artist = b.get("artist")
+        points = b.get("points", 0)
 
-    return {
-        "status": "boosted",
-        "title": payload.title,
-        "artist": payload.artist,
-        "points": payload.points
-    }
+        if not title or not artist:
+            continue
+
+        key = f"{title}|{artist}"
+        boost_map[key] = points
+
+    for song in items:
+        key = f"{song.get('title')}|{song.get('artist')}"
+        boost = boost_map.get(key, 0)
+
+        song["boost"] = boost
+        song["score"] += boost
+
+    return items
