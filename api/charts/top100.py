@@ -2,13 +2,13 @@ from fastapi import APIRouter
 import json
 import os
 
-router = APIRouter(prefix="/charts", tags=["charts"])
+router = APIRouter()
 
 DATA_FILE = "data/top100.json"
 
 
-@router.get("/top100")
-def get_top100():
+@router.get("/charts/top100")
+def top100():
     if not os.path.exists(DATA_FILE):
         return {
             "status": "ok",
