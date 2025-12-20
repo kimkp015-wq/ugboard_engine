@@ -2,56 +2,53 @@ from fastapi import APIRouter
 import json
 import os
 
-router = APIRouter(prefix="/charts", tags=["charts"])
+router = APIRouter()
 
 DATA_FILE = "data/top100.json"
 
 
-@router.get("/top100")
-def get_top100():
-    # If file does not exist, return safe empty
-    if not os.path.exists(DATA_FILE):
-        return {
-            "status": "ok",
-            "count": 0,
-            "items": []
-        }
+# ---------- helpers ----------
 
-    # Try reading the file safely
+def load_top100():
+    if not os.path.exists(DATA_FILE):
+        return []
+
     try:
         with open(DATA_FILE, "r") as f:
-            raw = f.read().strip()
-            if not raw:
-                # Empty file
-                return {
-                    "status": "ok",
-                    "count": 0,
-                    "items": []
-                }
+            data = json.load(f)
+            return data.get("items", [])
+    except Exception:
+        return []
 
-            data = json.loads(raw)
 
-    except json.JSONDecodeError:
-        # Malformed JSON
-        return {
-            "status": "ok",
-            "count": 0,
-            "items": []
-        }
-    except Exception as e:
-        # Unexpected error (still not crashing)
-        return {
-            "status": "error",
-            "message": f"Could not read Top100: {str(e)}"
-        }
+def calculate_score(item: dict) -> int:
+    youtube = int(item.get("youtube", 0))
+    radio = int(item.get("radio", 0))
+    tv = int(item.get("tv", 0))
+    boost = int(item.get("boost", 0))
 
-    # Grab list safely
-    items = data.get("items") if isinstance(data, dict) else None
-    if not isinstance(items, list):
-        items = []
+    # simple + safe scoring (can improve later)
+    return youtube + radio + tv + boost
+
+
+# ---------- endpoint ----------
+
+@router.get("/charts/top100")
+def get_top100():
+    items = load_top100()
+
+    for item in items:
+        item["score"] = calculate_score(item)
+
+    # sort by score (highest first)
+    items = sorted(items, key=lambda x: x["score"], reverse=True)
+
+    # reassign positions
+    for index, item in enumerate(items, start=1):
+        item["position"] = index
 
     return {
         "status": "ok",
         "count": len(items),
-        "items": items
+        "items": items[:100]
     }
