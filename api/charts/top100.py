@@ -1,3 +1,61 @@
+from fastapi import APIRouter, HTTPException
+import json
+import os
+
+router = APIRouter()
+
+# --- SAFE OPTIONAL BOOST IMPORT ---
+try:
+    from api.charts.boost import apply_boosts
+except Exception:
+    apply_boosts = None
+
+
+def resolve_top100_path():
+    candidates = [
+        "api/data/top100.json",
+        "data/top100.json",
+        "ingestion/top100.json",
+        "/app/api/data/top100.json",
+        "/app/data/top100.json",
+        "/app/ingestion/top100.json",
+    ]
+
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+
+    return None
+
+
+@router.get("/top100")
+def get_top100():
+    path = resolve_top100_path()
+
+    if not path:
+        raise HTTPException(
+            status_code=500,
+            detail="Top100 file not found in any known location"
+        )
+
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to read Top100 file: {str(e)}"
+        )
+
+    items = data.get("items", [])
+
+    return {
+        "status": "ok",
+        "count": len(items),
+        "items": items
+    }
+
+
 @router.post("/top100/recalculate")
 def recalculate_top100():
     path = resolve_top100_path()
@@ -25,12 +83,12 @@ def recalculate_top100():
             detail="Invalid Top100 format"
         )
 
-    # Apply boosts if available
-    if apply_boosts:
+    # Apply boosts ONLY if available
+    if apply_boosts is not None:
         try:
             items = apply_boosts(items)
         except Exception:
-            pass
+            pass  # boosts must NEVER crash charts
 
     # Sort by score
     def score_value(item):
@@ -45,7 +103,6 @@ def recalculate_top100():
     for index, item in enumerate(items, start=1):
         item["position"] = index
 
-    # Write back safely
     data["items"] = items
 
     try:
