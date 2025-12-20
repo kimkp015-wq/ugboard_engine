@@ -1,36 +1,66 @@
-from fastapi import APIRouter
-from api.storage import db
-from api.charts.recalculate import recalculate_top100
+from fastapi import APIRouter, HTTPException
+from typing import List, Union
+from pydantic import BaseModel
+
+from store import load_items, save_items
 
 router = APIRouter()
 
 
-@router.post("/youtube")
-def ingest_youtube(payload: dict):
-    items = payload.get("items", [])
+# -------- DATA MODELS --------
 
+class YouTubeItem(BaseModel):
+    title: str
+    artist: str
+    views: int
+
+
+class BulkYouTube(BaseModel):
+    items: List[YouTubeItem]
+
+
+# -------- HELPERS --------
+
+def find_song(items, title, artist):
     for item in items:
-        title = item["title"]
-        artist = item["artist"]
-        views = item.get("views", 0)
+        if item["title"] == title and item["artist"] == artist:
+            return item
+    return None
 
-        score = views  # youtube = 1x
 
-        db.top100.update_one(
-            {"title": title, "artist": artist},
-            {
-                "$inc": {
-                    "youtube": views,
-                    "score": score
-                }
-            },
-            upsert=True
-        )
+# -------- ROUTE --------
 
-    total = recalculate_top100()
+@router.post("/ingest/youtube")
+def ingest_youtube(payload: Union[YouTubeItem, BulkYouTube]):
+    items = load_items()
+    ingested = 0
+
+    # Normalize to list
+    if isinstance(payload, BulkYouTube):
+        incoming = payload.items
+    else:
+        incoming = [payload]
+
+    for entry in incoming:
+        song = find_song(items, entry.title, entry.artist)
+
+        if song:
+            song["youtube"] = song.get("youtube", 0) + entry.views
+        else:
+            items.append({
+                "title": entry.title,
+                "artist": entry.artist,
+                "youtube": entry.views,
+                "radio": 0,
+                "tv": 0,
+                "score": 0,
+            })
+
+        ingested += 1
+
+    save_items(items)
 
     return {
         "status": "ok",
-        "ingested": len(items),
-        "recalculated": total
+        "ingested": ingested
     }
