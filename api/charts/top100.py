@@ -55,6 +55,12 @@ for item in items:
         radio=item.get("radio", 0),
         tv=item.get("tv", 0),
     )
+    # sort by score (highest first)
+items.sort(key=lambda x: x["score"], reverse=True)
+
+# reassign chart positions
+for index, item in enumerate(items, start=1):
+    item["position"] = index
 
     return {
         "status": "ok",
