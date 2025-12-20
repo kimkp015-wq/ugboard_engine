@@ -1,17 +1,13 @@
-def calculate_score(youtube=0, radio=0, tv=0):
-    """
-    Unified scoring formula.
-    All inputs must be >= 0.
-    """
+def calculate_score(item: dict) -> int:
+    youtube = int(item.get("youtube", 0))
+    radio = int(item.get("radio", 0))
+    tv = int(item.get("tv", 0))
 
-    youtube = max(0, int(youtube))
-    radio = max(0, int(radio))
-    tv = max(0, int(tv))
+    score = (youtube * 1) + (radio * 3) + (tv * 2)
+    return score
 
-    score = (
-        youtube * 1.0 +
-        radio * 1.5 +
-        tv * 2.0
-    )
 
-    return round(score, 2)
+def recalculate_all(items: list) -> list:
+    for item in items:
+        item["score"] = calculate_score(item)
+    return items
