@@ -1,16 +1,13 @@
 from fastapi import APIRouter, HTTPException
-from api.charts.boost import apply_boosts
 import json
 import os
+
+from api.scoring.score import calculate_score
 
 router = APIRouter()
 
 
 def resolve_top100_path():
-    """
-    Try all known valid locations.
-    Works locally and on Railway.
-    """
     candidates = [
         "api/data/top100.json",
         "data/top100.json",
@@ -34,7 +31,7 @@ def get_top100():
     if not path:
         raise HTTPException(
             status_code=500,
-            detail="Top100 file not found in any known location"
+            detail="Top100 file not found"
         )
 
     try:
@@ -43,16 +40,20 @@ def get_top100():
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to read Top100 file: {str(e)}"
+            detail=f"Failed to read Top100 data: {str(e)}"
         )
 
     items = data.get("items", [])
 
-    # ✅ APPLY BOOSTS HERE (SAFE LOCATION)
-    items = apply_boosts(items)
+    # 🔹 APPLY SCORING (read-time only)
+    scored_items = []
+    for item in items:
+        item = dict(item)  # avoid mutating original
+        item["score"] = calculate_score(item)
+        scored_items.append(item)
 
     return {
         "status": "ok",
-        "count": len(items),
-        "items": items
+        "count": len(scored_items),
+        "items": scored_items
     }
