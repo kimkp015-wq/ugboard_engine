@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 import json
 import os
 
-# OPTIONAL boost import (safe)
+# Optional boost import (safe)
 try:
     from api.charts.boost import apply_boosts
 except Exception:
@@ -12,10 +12,6 @@ router = APIRouter()
 
 
 def resolve_top100_path():
-    """
-    Try all known valid locations.
-    Avoids Railway + local path issues.
-    """
     candidates = [
         "api/data/top100.json",
         "data/top100.json",
@@ -42,7 +38,6 @@ def get_top100():
             detail="Top100 file not found in any known location"
         )
 
-    # --- Read JSON safely ---
     try:
         with open(path, "r") as f:
             data = json.load(f)
@@ -65,13 +60,25 @@ def get_top100():
             detail="Top100 items must be a list"
         )
 
-    # --- Apply boosts if available ---
+    # Apply boosts safely (optional)
     if apply_boosts:
         try:
             items = apply_boosts(items)
         except Exception:
-            # Boost failure should NOT crash charts
             pass
+
+    # -------- STEP 2C: SORT BY SCORE --------
+    def score_value(item):
+        try:
+            return float(item.get("score", 0))
+        except Exception:
+            return 0
+
+    items = sorted(items, key=score_value, reverse=True)
+
+    # Reassign positions after sorting
+    for index, item in enumerate(items, start=1):
+        item["position"] = index
 
     return {
         "status": "ok",
