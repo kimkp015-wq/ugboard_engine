@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from api.scoring.scoring import calculate_score
 import json
 import os
 
@@ -11,6 +12,9 @@ except Exception:
     apply_boosts = None
 
 
+# -----------------------------
+# Resolve Top100 JSON file path
+# -----------------------------
 def resolve_top100_path():
     candidates = [
         "api/data/top100.json",
@@ -28,6 +32,9 @@ def resolve_top100_path():
     return None
 
 
+# -----------------------------
+# GET Top 100
+# -----------------------------
 @router.get("/top100")
 def get_top100():
     path = resolve_top100_path()
@@ -56,6 +63,9 @@ def get_top100():
     }
 
 
+# -----------------------------
+# POST Recalculate Top 100
+# -----------------------------
 @router.post("/top100/recalculate")
 def recalculate_top100():
     path = resolve_top100_path()
@@ -83,28 +93,44 @@ def recalculate_top100():
             detail="Invalid Top100 format"
         )
 
-    # Apply boosts ONLY if available
+    # -----------------------------
+    # Calculate scores
+    # -----------------------------
+    for item in items:
+        try:
+            item["score"] = calculate_score(item)
+        except Exception:
+            item["score"] = 0  # scoring must never crash charts
+
+    # -----------------------------
+    # Apply boosts (optional)
+    # -----------------------------
     if apply_boosts is not None:
         try:
             items = apply_boosts(items)
         except Exception:
             pass  # boosts must NEVER crash charts
 
-    # Sort by score
-    def score_value(item):
-        try:
-            return float(item.get("score", 0))
-        except Exception:
-            return 0
+    # -----------------------------
+    # Sort by score (descending)
+    # -----------------------------
+    items = sorted(
+        items,
+        key=lambda x: float(x.get("score", 0)),
+        reverse=True
+    )
 
-    items = sorted(items, key=score_value, reverse=True)
-
+    # -----------------------------
     # Reassign positions
+    # -----------------------------
     for index, item in enumerate(items, start=1):
         item["position"] = index
 
     data["items"] = items
 
+    # -----------------------------
+    # Write back to file
+    # -----------------------------
     try:
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
