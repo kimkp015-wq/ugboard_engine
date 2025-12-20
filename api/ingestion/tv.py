@@ -1,36 +1,66 @@
 from fastapi import APIRouter
-from api.storage import db
-from api.charts.recalculate import recalculate_top100
+from typing import List, Union
+from pydantic import BaseModel
+
+from store import load_items, save_items
 
 router = APIRouter()
 
 
-@router.post("/tv")
-def ingest_tv(payload: dict):
-    items = payload.get("items", [])
+# -------- DATA MODELS --------
 
+class TVItem(BaseModel):
+    title: str
+    artist: str
+    plays: int
+
+
+class BulkTV(BaseModel):
+    items: List[TVItem]
+
+
+# -------- HELPERS --------
+
+def find_song(items, title, artist):
     for item in items:
-        title = item["title"]
-        artist = item["artist"]
-        appearances = item.get("appearances", 0)
+        if item["title"] == title and item["artist"] == artist:
+            return item
+    return None
 
-        score = appearances * 5  # tv weight
 
-        db.top100.update_one(
-            {"title": title, "artist": artist},
-            {
-                "$inc": {
-                    "tv": appearances,
-                    "score": score
-                }
-            },
-            upsert=True
-        )
+# -------- ROUTE --------
 
-    total = recalculate_top100()
+@router.post("/ingest/tv")
+def ingest_tv(payload: Union[TVItem, BulkTV]):
+    items = load_items()
+    ingested = 0
+
+    # Normalize to list
+    if isinstance(payload, BulkTV):
+        incoming = payload.items
+    else:
+        incoming = [payload]
+
+    for entry in incoming:
+        song = find_song(items, entry.title, entry.artist)
+
+        if song:
+            song["tv"] = song.get("tv", 0) + entry.plays
+        else:
+            items.append({
+                "title": entry.title,
+                "artist": entry.artist,
+                "youtube": 0,
+                "radio": 0,
+                "tv": entry.plays,
+                "score": 0,
+            })
+
+        ingested += 1
+
+    save_items(items)
 
     return {
         "status": "ok",
-        "ingested": len(items),
-        "recalculated": total
+        "ingested": ingested
     }
