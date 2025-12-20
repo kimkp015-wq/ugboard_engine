@@ -1,17 +1,17 @@
-def calculate_score(item: dict) -> float:
+def calculate_score(youtube=0, radio=0, tv=0):
     """
-    Calculate score using weighted sources.
-    Safe defaults prevent crashes.
+    Unified scoring formula.
+    All inputs must be >= 0.
     """
 
-    youtube = float(item.get("youtube", 0) or 0)
-    radio = float(item.get("radio", 0) or 0)
-    tv = float(item.get("tv", 0) or 0)
+    youtube = max(0, int(youtube))
+    radio = max(0, int(radio))
+    tv = max(0, int(tv))
 
     score = (
-        youtube * 0.6 +
-        radio * 0.3 +
-        tv * 0.1
+        youtube * 1.0 +
+        radio * 1.5 +
+        tv * 2.0
     )
 
     return round(score, 2)

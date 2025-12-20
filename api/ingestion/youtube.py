@@ -1,21 +1,34 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from api.scoring.scoring import calculate_score
 import json
 import os
-from datetime import datetime
 
 router = APIRouter()
 
-YOUTUBE_FILE = "data/youtube.json"
+
+def resolve_top100_path():
+    candidates = [
+        "ingestion/top100.json",
+        "data/top100.json",
+        "/app/ingestion/top100.json",
+        "/app/data/top100.json",
+    ]
+
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+
+    return None
 
 
-@router.post("/ingestion/youtube")
+@router.post("/youtube")
 def ingest_youtube(payload: dict):
     """
-    Expected payload example:
+    Expected payload:
     {
-      "title": "Test Song",
-      "artist": "Test Artist",
-      "views": 12000
+      "title": "Song",
+      "artist": "Artist",
+      "views": 12345
     }
     """
 
@@ -24,39 +37,56 @@ def ingest_youtube(payload: dict):
     views = payload.get("views", 0)
 
     if not title or not artist:
-        return {"status": "error", "detail": "title and artist required"}
+        raise HTTPException(status_code=400, detail="title and artist required")
 
-    os.makedirs("data", exist_ok=True)
+    path = resolve_top100_path()
+    if not path:
+        raise HTTPException(status_code=500, detail="Top100 file not found")
 
-    if os.path.exists(YOUTUBE_FILE):
-        with open(YOUTUBE_FILE, "r") as f:
+    try:
+        with open(path, "r") as f:
             data = json.load(f)
-    else:
-        data = {"updated_at": None, "items": []}
+    except Exception:
+        data = {"items": []}
 
-    # Update or insert
-    found = False
-    for item in data["items"]:
-        if item["title"] == title and item["artist"] == artist:
-            item["views"] += int(views)
-            found = True
+    items = data.get("items", [])
+
+    # Find or create entry
+    item = None
+    for i in items:
+        if i.get("title") == title and i.get("artist") == artist:
+            item = i
             break
 
-    if not found:
-        data["items"].append({
+    if not item:
+        item = {
             "title": title,
             "artist": artist,
-            "views": int(views)
-        })
+            "youtube": 0,
+            "radio": 0,
+            "tv": 0,
+            "score": 0
+        }
+        items.append(item)
 
-    data["updated_at"] = datetime.utcnow().isoformat()
+    # Update YouTube value
+    item["youtube"] = max(0, int(views))
 
-    with open(YOUTUBE_FILE, "w") as f:
+    # Recalculate score
+    item["score"] = calculate_score(
+        youtube=item.get("youtube", 0),
+        radio=item.get("radio", 0),
+        tv=item.get("tv", 0),
+    )
+
+    data["items"] = items
+
+    with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
     return {
-        "status": "ok",
+        "status": "youtube_ingested",
         "title": title,
         "artist": artist,
-        "views_added": views
+        "score": item["score"]
     }
