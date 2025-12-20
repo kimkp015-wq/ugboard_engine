@@ -1,71 +1,76 @@
-from fastapi import APIRouter
-from pydantic import BaseModel, field_validator
-from datetime import datetime
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 import json
 import os
 
-router = APIRouter()
+from api.scoring.scoring import calculate_score
 
-RADIO_FILE = "data/radio.json"
-BOOST_FILE = "data/boost.json"
-
-RADIO_WEIGHT = 5  # radio is very powerful
+router = APIRouter(prefix="/radio", tags=["ingestion"])
 
 
-class RadioPlay(BaseModel):
+class RadioIngest(BaseModel):
     title: str
     artist: str
-    plays: int
-
-    @field_validator("plays")
-    @classmethod
-    def positive(cls, v):
-        if v <= 0:
-            raise ValueError("plays must be positive")
-        return v
+    plays: int = 1
 
 
-def load_json(path):
-    if not os.path.exists(path):
-        return []
-    with open(path, "r") as f:
-        return json.load(f)
+def resolve_top100_path():
+    candidates = [
+        "api/data/top100.json",
+        "data/top100.json",
+        "ingestion/top100.json",
+        "/app/api/data/top100.json",
+        "/app/data/top100.json",
+        "/app/ingestion/top100.json",
+    ]
+
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+
+    return None
 
 
-def save_json(path, data):
-    os.makedirs("data", exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
+@router.post("")
+def ingest_radio(payload: RadioIngest):
+    path = resolve_top100_path()
 
+    if not path:
+        raise HTTPException(status_code=500, detail="Top100 file not found")
 
-@router.post("/ingest/radio")
-def ingest_radio(payload: RadioPlay):
-    radio = load_json(RADIO_FILE)
-    boosts = load_json(BOOST_FILE)
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to read Top100")
 
-    # save radio play
-    radio.append({
-        "title": payload.title,
-        "artist": payload.artist,
-        "plays": payload.plays,
-        "time": datetime.utcnow().isoformat()
-    })
+    items = data.get("items", [])
+    updated = False
 
-    # convert radio plays → boost points
-    boosts.append({
-        "title": payload.title,
-        "artist": payload.artist,
-        "points": payload.plays * RADIO_WEIGHT,
-        "source": "radio",
-        "time": datetime.utcnow().isoformat()
-    })
+    for item in items:
+        if (
+            item.get("title") == payload.title
+            and item.get("artist") == payload.artist
+        ):
+            item["radio"] = int(item.get("radio", 0)) + payload.plays
+            item["score"] = calculate_score(item)
+            updated = True
+            break
 
-    save_json(RADIO_FILE, radio)
-    save_json(BOOST_FILE, boosts)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Song not found in Top100")
+
+    data["items"] = items
+
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to write Top100")
 
     return {
-        "status": "radio ingested",
+        "status": "ok",
+        "message": "Radio plays added",
         "title": payload.title,
         "artist": payload.artist,
-        "points_added": payload.plays * RADIO_WEIGHT
     }
