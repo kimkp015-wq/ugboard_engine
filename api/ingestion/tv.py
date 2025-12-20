@@ -1,69 +1,36 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import List
-import json
-import os
+from fastapi import APIRouter
+from api.storage import db
+from api.charts.recalculate import recalculate_top100
 
 router = APIRouter()
 
 
-DATA_PATHS = [
-    "api/data/top100.json",
-    "data/top100.json",
-    "ingestion/top100.json",
-    "/app/api/data/top100.json",
-    "/app/data/top100.json",
-    "/app/ingestion/top100.json",
-]
-
-
-def resolve_top100_path():
-    for path in DATA_PATHS:
-        if os.path.exists(path):
-            return path
-    return None
-
-
-# ---------- MODELS ----------
-
-class TVItem(BaseModel):
-    title: str
-    artist: str
-    appearances: int
-
-
-class TVBulk(BaseModel):
-    items: List[TVItem]
-
-
-# ---------- ROUTE ----------
-
 @router.post("/tv")
-def ingest_tv(payload: TVBulk):
-    path = resolve_top100_path()
+def ingest_tv(payload: dict):
+    items = payload.get("items", [])
 
-    if not path:
-        raise HTTPException(status_code=500, detail="Top100 file not found")
+    for item in items:
+        title = item["title"]
+        artist = item["artist"]
+        appearances = item.get("appearances", 0)
 
-    with open(path, "r") as f:
-        data = json.load(f)
+        score = appearances * 5  # tv weight
 
-    items = data.get("items", [])
-    ingested = 0
+        db.top100.update_one(
+            {"title": title, "artist": artist},
+            {
+                "$inc": {
+                    "tv": appearances,
+                    "score": score
+                }
+            },
+            upsert=True
+        )
 
-    for entry in payload.items:
-        for song in items:
-            if (
-                song.get("title") == entry.title
-                and song.get("artist") == entry.artist
-            ):
-                song["tv"] = song.get("tv", 0) + entry.appearances
-                ingested += 1
-
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
+    total = recalculate_top100()
 
     return {
         "status": "ok",
-        "ingested": ingested
+        "ingested": len(items),
+        "recalculated": total
     }

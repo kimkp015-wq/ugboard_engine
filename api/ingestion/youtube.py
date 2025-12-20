@@ -1,115 +1,36 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import List, Optional
-import json
-import os
+from fastapi import APIRouter
+from api.storage import db
+from api.charts.recalculate import recalculate_top100
 
 router = APIRouter()
 
 
-# ---------- MODELS ----------
-
-class YouTubeItem(BaseModel):
-    title: str
-    artist: str
-    views: int
-
-
-class YouTubeBulk(BaseModel):
-    items: List[YouTubeItem]
-
-
-# ---------- FILE RESOLUTION ----------
-
-def resolve_top100_path():
-    candidates = [
-        "api/data/top100.json",
-        "data/top100.json",
-        "ingestion/top100.json",
-        "/app/api/data/top100.json",
-        "/app/data/top100.json",
-        "/app/ingestion/top100.json",
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            return path
-    return None
-
-
-# ---------- HELPERS ----------
-
-def load_top100(path):
-    with open(path, "r") as f:
-        return json.load(f)
-
-
-def save_top100(path, data):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-
-
-def find_song(items, title, artist):
-    for item in items:
-        if (
-            item.get("title") == title
-            and item.get("artist") == artist
-        ):
-            return item
-    return None
-
-
-# ---------- ROUTE ----------
-
 @router.post("/youtube")
-def ingest_youtube(payload: Optional[YouTubeBulk] = None):
-    """
-    Accepts:
-    - Single item
-    - Bulk items under { "items": [...] }
-    """
+def ingest_youtube(payload: dict):
+    items = payload.get("items", [])
 
-    path = resolve_top100_path()
-    if not path:
-        raise HTTPException(status_code=500, detail="Top100 file not found")
+    for item in items:
+        title = item["title"]
+        artist = item["artist"]
+        views = item.get("views", 0)
 
-    data = load_top100(path)
-    items = data.get("items", [])
+        score = views  # youtube = 1x
 
-    if not isinstance(items, list):
-        items = []
-
-    # Normalize payload
-    if payload is None or not payload.items:
-        raise HTTPException(
-            status_code=422,
-            detail="Body must contain { items: [...] }"
+        db.top100.update_one(
+            {"title": title, "artist": artist},
+            {
+                "$inc": {
+                    "youtube": views,
+                    "score": score
+                }
+            },
+            upsert=True
         )
 
-    ingested = 0
-
-    for entry in payload.items:
-        song = find_song(items, entry.title, entry.artist)
-
-        if song:
-            # Update existing
-            song["youtube"] = song.get("youtube", 0) + entry.views
-        else:
-            # Create new
-            items.append({
-                "title": entry.title,
-                "artist": entry.artist,
-                "youtube": entry.views,
-                "radio": 0,
-                "tv": 0,
-                "score": 0
-            })
-
-        ingested += 1
-
-    data["items"] = items
-    save_top100(path, data)
+    total = recalculate_top100()
 
     return {
         "status": "ok",
-        "ingested": ingested
+        "ingested": len(items),
+        "recalculated": total
     }
