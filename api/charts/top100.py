@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 import json
 import os
+from api.scoring.scoring import calculate_score
 
 router = APIRouter()
 
@@ -47,6 +48,13 @@ def get_top100():
         )
 
     items = data.get("items", [])
+
+for item in items:
+    item["score"] = calculate_score(
+        youtube=item.get("youtube", 0),
+        radio=item.get("radio", 0),
+        tv=item.get("tv", 0),
+    )
 
     return {
         "status": "ok",
