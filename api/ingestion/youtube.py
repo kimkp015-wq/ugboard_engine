@@ -1,33 +1,45 @@
 from fastapi import APIRouter
+from typing import List, Dict, Union
 from data.store import load_items, save_items
-from api.scoring.scoring import recalculate_all
 
 router = APIRouter()
 
 
 @router.post("/ingest/youtube")
-def ingest_youtube(payload: dict):
+def ingest_youtube(payload: Union[Dict, List[Dict]]):
     items = load_items()
 
-    records = payload.get("items")
-    if not isinstance(records, list):
-        records = [payload]
+    if isinstance(payload, dict):
+        payload = [payload]
 
     ingested = 0
 
-    for record in records:
-        title = record.get("title")
-        artist = record.get("artist")
-        views = int(record.get("views", 0))
+    for entry in payload:
+        title = entry.get("title")
+        artist = entry.get("artist")
+        views = int(entry.get("views", 0))
 
-        for item in items:
-            if item["title"] == title and item["artist"] == artist:
-                item["youtube"] = item.get("youtube", 0) + views
-                ingested += 1
-                break
+        if not title or not artist:
+            continue
 
-    # ✅ AUTO RECALCULATE
-    items = recalculate_all(items)
+        song = next(
+            (i for i in items if i["title"] == title and i["artist"] == artist),
+            None
+        )
+
+        if not song:
+            song = {
+                "title": title,
+                "artist": artist,
+                "youtube": 0,
+                "radio": 0,
+                "tv": 0,
+                "score": 0
+            }
+            items.append(song)
+
+        song["youtube"] += views
+        ingested += 1
 
     save_items(items)
 
