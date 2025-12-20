@@ -1,44 +1,26 @@
-import json
-import os
+def apply_boosts(items: list) -> list:
+    """
+    Final scoring logic (safe, crash-proof)
 
-BOOST_FILE = "data/boosts.json"
+    Score formula:
+    score = youtube*1 + radio*3 + tv*5
+    """
 
+    for item in items:
+        youtube = item.get("youtube", 0)
+        radio = item.get("radio", 0)
+        tv = item.get("tv", 0)
 
-def load_boosts():
-    if not os.path.exists(BOOST_FILE):
-        return []
+        # Final score calculation
+        score = (youtube * 1) + (radio * 3) + (tv * 5)
 
-    try:
-        with open(BOOST_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return []
+        item["score"] = score
 
+    # Sort by score (highest first)
+    items.sort(key=lambda x: x.get("score", 0), reverse=True)
 
-def apply_boosts(items):
-    boosts = load_boosts()
-
-    if not boosts:
-        return items
-
-    boost_map = {}
-
-    for b in boosts:
-        title = b.get("title")
-        artist = b.get("artist")
-        points = b.get("points", 0)
-
-        if not title or not artist:
-            continue
-
-        key = f"{title}|{artist}"
-        boost_map[key] = points
-
-    for song in items:
-        key = f"{song.get('title')}|{song.get('artist')}"
-        boost = boost_map.get(key, 0)
-
-        song["boost"] = boost
-        song["score"] += boost
+    # Re-assign positions after scoring
+    for index, item in enumerate(items, start=1):
+        item["position"] = index
 
     return items
