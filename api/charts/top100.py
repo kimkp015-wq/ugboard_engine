@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException
 import json
 import os
-from api.scoring.scoring import calculate_score
 
 router = APIRouter()
 
@@ -29,7 +28,6 @@ def resolve_top100_path():
 
 @router.get("/top100")
 def get_top100():
-    # ✅ FIXED FUNCTION NAME
     path = resolve_top100_path()
 
     if not path:
@@ -39,7 +37,7 @@ def get_top100():
         )
 
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r") as f:
             data = json.load(f)
     except Exception as e:
         raise HTTPException(
@@ -48,19 +46,6 @@ def get_top100():
         )
 
     items = data.get("items", [])
-
-for item in items:
-    item["score"] = calculate_score(
-        youtube=item.get("youtube", 0),
-        radio=item.get("radio", 0),
-        tv=item.get("tv", 0),
-    )
-    # sort by score (highest first)
-items.sort(key=lambda x: x["score"], reverse=True)
-
-# reassign chart positions
-for index, item in enumerate(items, start=1):
-    item["position"] = index
 
     return {
         "status": "ok",
