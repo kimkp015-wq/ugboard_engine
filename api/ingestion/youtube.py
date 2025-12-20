@@ -1,63 +1,33 @@
+from fastapi import APIRouter
+from store import load_items, save_items
 from api.scoring.scoring import recalculate_all
-from fastapi import APIRouter, HTTPException
-from typing import List, Union
-from pydantic import BaseModel
-
-from store import load_items,items = recalculate_all(items) save_items
 
 router = APIRouter()
 
 
-# -------- DATA MODELS --------
-
-class YouTubeItem(BaseModel):
-    title: str
-    artist: str
-    views: int
-
-
-class BulkYouTube(BaseModel):
-    items: List[YouTubeItem]
-
-
-# -------- HELPERS --------
-
-def find_song(items, title, artist):
-    for item in items:
-        if item["title"] == title and item["artist"] == artist:
-            return item
-    return None
-
-
-# -------- ROUTE --------
-
 @router.post("/ingest/youtube")
-def ingest_youtube(payload: Union[YouTubeItem, BulkYouTube]):
+def ingest_youtube(payload: dict):
     items = load_items()
+
+    records = payload.get("items")
+    if not isinstance(records, list):
+        records = [payload]
+
     ingested = 0
 
-    # Normalize to list
-    if isinstance(payload, BulkYouTube):
-        incoming = payload.items
-    else:
-        incoming = [payload]
+    for record in records:
+        title = record.get("title")
+        artist = record.get("artist")
+        views = int(record.get("views", 0))
 
-    for entry in incoming:
-        song = find_song(items, entry.title, entry.artist)
+        for item in items:
+            if item["title"] == title and item["artist"] == artist:
+                item["youtube"] = item.get("youtube", 0) + views
+                ingested += 1
+                break
 
-        if song:
-            song["youtube"] = song.get("youtube", 0) + entry.views
-        else:
-            items.append({
-                "title": entry.title,
-                "artist": entry.artist,
-                "youtube": entry.views,
-                "radio": 0,
-                "tv": 0,
-                "score": 0,
-            })
-
-        ingested += 1
+    # ✅ AUTO RECALCULATE
+    items = recalculate_all(items)
 
     save_items(items)
 
