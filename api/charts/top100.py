@@ -4,26 +4,45 @@ import os
 
 router = APIRouter()
 
-# Absolute path to api/data/top100.json
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # api/
-DATA_FILE = os.path.join(BASE_DIR, "data", "top100.json")
+
+def resolve_top100_path():
+    """
+    Try all known valid locations.
+    This avoids Railway path issues.
+    """
+    candidates = [
+        "api/data/top100.json",
+        "data/top100.json",
+        "ingestion/top100.json",
+        "/app/api/data/top100.json",
+        "/app/data/top100.json",
+        "/app/ingestion/top100.json",
+    ]
+
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+
+    return None
 
 
 @router.get("/top100")
 def get_top100():
-    if not os.path.exists(DATA_FILE):
+    path = resolve_top100_path()
+
+    if not path:
         raise HTTPException(
             status_code=500,
-            detail=f"Top100 file not found at {DATA_FILE}"
+            detail="Top100 file not found in any known location"
         )
 
     try:
-        with open(DATA_FILE, "r") as f:
+        with open(path, "r") as f:
             data = json.load(f)
-    except Exception:
+    except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail="Failed to read Top 100 data"
+            detail=f"Failed to read Top100 file: {str(e)}"
         )
 
     items = data.get("items", [])
