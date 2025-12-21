@@ -19,6 +19,9 @@ app.include_router(publish_router, prefix="/admin", tags=["admin"])
 # Charts
 app.include_router(trending_router, prefix="/charts", tags=["charts"])
 app.include_router(top100_router, prefix="/charts", tags=["charts"])
+    from api.charts import regions
+
+app.include_router(regions.router, prefix="/charts", tags=["Charts"])
 
 # Ingestion
 app.include_router(youtube_router, prefix="/ingest", tags=["ingestion"])

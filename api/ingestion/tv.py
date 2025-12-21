@@ -41,3 +41,5 @@ def ingest_radio(payload: dict, background_tasks: BackgroundTasks):
     background_tasks.add_task(safe_auto_recalculate)
 
     return {"status": "ok", "ingested": ingested}
+    @router.post("/tv", operation_id="ingest_tv")
+def ingest_tv(payload: dict, background_tasks: BackgroundTasks):
