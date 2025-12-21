@@ -1,5 +1,3 @@
-# api/ingestion/radio.py
-
 from fastapi import APIRouter, BackgroundTasks
 from data.store import load_items, save_items
 from api.scoring.auto_recalc import safe_auto_recalculate, mark_ingestion
@@ -21,6 +19,9 @@ def ingest_radio(payload: dict, background_tasks: BackgroundTasks):
         title = record.get("title")
         artist = record.get("artist")
         plays = int(record.get("plays", 0))
+
+        if not title or not artist:
+            continue
 
         for item in items:
             if item["title"] == title and item["artist"] == artist:

@@ -1,85 +1,79 @@
 # api/scoring/auto_recalc.py
 
-import json
-import os
 import time
-from data.store import load_items
+import threading
+from pathlib import Path
+from data.store import load_items, save_items
 from api.scoring.scoring import recalculate_all
 
-TOP100_PATH = "data/top100.json"
-STATE_PATH = "data/recalc_state.json"
-DEBOUNCE_SECONDS = 10
+# -----------------------------
+# CONFIG
+# -----------------------------
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(exist_ok=True)
+
+LAST_RUN_FILE = DATA_DIR / "last_recalc.txt"
+INGEST_FLAG_FILE = DATA_DIR / "pending_ingestion.flag"
+
+DEBOUNCE_SECONDS = 5
+_LOCK = threading.Lock()
 
 
-def _read_state():
-    if not os.path.exists(STATE_PATH):
-        return {}
-    try:
-        with open(STATE_PATH, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def _write_state(state: dict):
-    os.makedirs("data", exist_ok=True)
-    with open(STATE_PATH, "w") as f:
-        json.dump(state, f)
-
-
+# -----------------------------
+# MARK INGESTION
+# -----------------------------
 def mark_ingestion():
     """
-    Call this on EVERY ingestion.
+    Signals that new ingestion has happened.
+    This is crash-safe and non-blocking.
     """
-    state = _read_state()
-    state["last_ingestion"] = time.time()
-    _write_state(state)
+    try:
+        INGEST_FLAG_FILE.write_text(str(time.time()))
+    except Exception:
+        pass
 
 
+# -----------------------------
+# SAFE AUTO RECALCULATE
+# -----------------------------
 def safe_auto_recalculate():
     """
-    Debounced, lock-aware, crash-proof auto recalculation.
+    Runs recalculation ONLY when needed.
+    Debounced, locked, crash-safe.
     """
-
-    try:
-        # --- Debounce check ---
-        state = _read_state()
-        last = state.get("last_ingestion")
-
-        if not last:
+    with _LOCK:
+        # If no ingestion happened, skip
+        if not INGEST_FLAG_FILE.exists():
             return
 
-        if time.time() - last < DEBOUNCE_SECONDS:
-            # Too soon -- skip recalculation
+        now = time.time()
+
+        try:
+            last = float(LAST_RUN_FILE.read_text())
+        except Exception:
+            last = 0.0
+
+        # Debounce
+        if now - last < DEBOUNCE_SECONDS:
             return
 
-        # --- Load chart ---
-        if not os.path.exists(TOP100_PATH):
-            return
+        # Mark recalc time first (crash-safe)
+        try:
+            LAST_RUN_FILE.write_text(str(now))
+        except Exception:
+            pass
 
-        with open(TOP100_PATH, "r") as f:
-            chart = json.load(f)
+        # Clear ingestion flag
+        try:
+            INGEST_FLAG_FILE.unlink()
+        except Exception:
+            pass
 
-        # Respect lock
-        if chart.get("locked"):
-            return
-
-        # --- Load & recalc ---
-        items = load_items()
-        items = recalculate_all(items)
-        items.sort(key=lambda x: float(x.get("score", 0)), reverse=True)
-
-        for idx, item in enumerate(items, 1):
-            item["position"] = idx
-
-        chart["items"] = items
-
-        # --- Atomic write ---
-        temp = TOP100_PATH + ".tmp"
-        with open(temp, "w") as f:
-            json.dump(chart, f, indent=2)
-        os.replace(temp, TOP100_PATH)
-
-    except Exception:
-        # ABSOLUTE SAFETY: never crash
-        return
+        # Recalculate safely
+        try:
+            items = load_items()
+            items = recalculate_all(items)
+            save_items(items)
+        except Exception:
+            # NEVER crash the engine
+            pass

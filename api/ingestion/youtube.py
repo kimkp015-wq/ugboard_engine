@@ -1,5 +1,3 @@
-# api/ingestion/youtube.py
-
 from fastapi import APIRouter, BackgroundTasks
 from typing import Dict, List, Union
 from data.store import load_items, save_items
