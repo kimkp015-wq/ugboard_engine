@@ -1,34 +1,24 @@
 from fastapi import APIRouter
 from data.store import load_items, save_items
+from api.schemas.ingestion import RadioPayload
 from api.scoring.auto_recalc import try_auto_recalculate
 
 router = APIRouter()
 
 
 @router.post("/ingest/radio")
-def ingest_radio(payload: dict):
+def ingest_radio(payload: RadioPayload):
     items = load_items()
-
-    records = payload.get("items")
-    if not isinstance(records, list):
-        records = [payload]
-
     ingested = 0
 
-    for record in records:
-        title = record.get("title")
-        artist = record.get("artist")
-        plays = int(record.get("plays", 0))
-
-        for item in items:
-            if item["title"] == title and item["artist"] == artist:
-                item["radio"] = item.get("radio", 0) + plays
+    for entry in payload.items:
+        for song in items:
+            if song["title"] == entry.title and song["artist"] == entry.artist:
+                song["radio"] += entry.plays
                 ingested += 1
                 break
 
     save_items(items)
-
-    # 🔧 SAFE AUTO-RECALC
     try_auto_recalculate()
 
     return {
