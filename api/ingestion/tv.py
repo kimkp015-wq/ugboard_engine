@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import BackgroundTasksfrom fastapi import APIRouter
 from data.store import load_items, save_items
 from api.scoring.scoring import recalculate_all
 
