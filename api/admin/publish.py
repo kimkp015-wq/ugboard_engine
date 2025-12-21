@@ -1,14 +1,26 @@
 from fastapi import APIRouter, HTTPException
 import json
 import os
+from pathlib import Path
 
 router = APIRouter()
 
-TOP100_PATH = "data/top100.json"
+# Canonical Top100 storage location
+TOP100_PATH = Path("data/top100.json")
 
 
 @router.post("/publish/top100")
 def publish_top100(payload: dict):
+    """
+    Publish Top100 chart manually.
+    Expects:
+    {
+      "items": [
+        { "title": "...", "artist": "..." }
+      ]
+    }
+    """
+
     items = payload.get("items")
 
     if not isinstance(items, list) or len(items) == 0:
@@ -36,10 +48,24 @@ def publish_top100(payload: dict):
             "score": 0
         })
 
-    os.makedirs("data", exist_ok=True)
+    if not clean_items:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid items found to publish"
+        )
 
+    # Ensure data directory exists
+    TOP100_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    # Write Top100 file
     with open(TOP100_PATH, "w") as f:
-        json.dump({"items": clean_items}, f, indent=2)
+        json.dump(
+            {
+                "items": clean_items
+            },
+            f,
+            indent=2
+        )
 
     return {
         "status": "ok",
