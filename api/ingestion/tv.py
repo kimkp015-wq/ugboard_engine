@@ -1,16 +1,17 @@
 from fastapi import APIRouter
-from typing import Dict, List, Union
 from data.store import load_items, save_items
-from api.charts.recalculate import safe_recalculate_top100
+from api.scoring.auto import safe_auto_recalculate
 
 router = APIRouter()
 
 
-@router.post("/tv")
-def ingest_tv(payload: Union[Dict, List[Dict]]):
+@router.post("/ingest/tv")
+def ingest_tv(payload: dict):
     items = load_items()
 
-    records = payload if isinstance(payload, list) else payload.get("items", [payload])
+    records = payload.get("items")
+    if not isinstance(records, list):
+        records = [payload]
 
     ingested = 0
 
@@ -19,20 +20,16 @@ def ingest_tv(payload: Union[Dict, List[Dict]]):
         artist = record.get("artist")
         plays = int(record.get("plays", 0))
 
-        if not title or not artist:
-            continue
-
-        song = next(
-            (i for i in items if i["title"] == title and i["artist"] == artist),
-            None
-        )
-
-        if song:
-            song["tv"] = song.get("tv", 0) + plays
-            ingested += 1
+        for item in items:
+            if item["title"] == title and item["artist"] == artist:
+                item["tv"] = item.get("tv", 0) + plays
+                ingested += 1
+                break
 
     save_items(items)
-    safe_recalculate_top100()
+
+    # 🔧 SAFE AUTO RECALC
+    safe_auto_recalculate(items)
 
     return {
         "status": "ok",

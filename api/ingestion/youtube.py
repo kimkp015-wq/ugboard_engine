@@ -1,24 +1,24 @@
 from fastapi import APIRouter
 from typing import List, Dict, Union
 from data.store import load_items, save_items
-from api.charts.recalculate import safe_recalculate_top100
+from api.scoring.auto import safe_auto_recalculate
 
 router = APIRouter()
 
 
-@router.post("/youtube")
+@router.post("/ingest/youtube")
 def ingest_youtube(payload: Union[Dict, List[Dict]]):
     items = load_items()
 
-    # normalize to list
-    records = payload if isinstance(payload, list) else [payload]
+    if isinstance(payload, dict):
+        payload = [payload]
 
     ingested = 0
 
-    for record in records:
-        title = record.get("title")
-        artist = record.get("artist")
-        views = int(record.get("views", 0))
+    for entry in payload:
+        title = entry.get("title")
+        artist = entry.get("artist")
+        views = int(entry.get("views", 0))
 
         if not title or not artist:
             continue
@@ -43,7 +43,9 @@ def ingest_youtube(payload: Union[Dict, List[Dict]]):
         ingested += 1
 
     save_items(items)
-    safe_recalculate_top100()
+
+    # 🔧 SAFE AUTO RECALC
+    safe_auto_recalculate(items)
 
     return {
         "status": "ok",
