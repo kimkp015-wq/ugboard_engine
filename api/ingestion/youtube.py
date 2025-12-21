@@ -1,16 +1,13 @@
-from fastapi import APIRouter, BackgroundTasks
-from typing import List, Dict, Union
+from fastapi import APIRouter
+from typing import Dict, List, Union
 from data.store import load_items, save_items
-from api.scoring.auto import safe_auto_recalculate
+from api.scoring.auto_recalc import try_auto_recalculate
 
 router = APIRouter()
 
 
 @router.post("/ingest/youtube")
-def ingest_youtube(
-    payload: Union[Dict, List[Dict]],
-    background_tasks: BackgroundTasks
-):
+def ingest_youtube(payload: Union[Dict, List[Dict]]):
     items = load_items()
 
     if isinstance(payload, dict):
@@ -47,8 +44,8 @@ def ingest_youtube(
 
     save_items(items)
 
-    # 🔥 BACKGROUND AUTO RECALC
-    background_tasks.add_task(safe_auto_recalculate, items)
+    # 🔧 SAFE AUTO-RECALC
+    try_auto_recalculate()
 
     return {
         "status": "ok",
