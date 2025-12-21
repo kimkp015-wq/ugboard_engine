@@ -1,4 +1,7 @@
+# api/ingestion/radio.py
+
 from fastapi import APIRouter, BackgroundTasks
+from typing import Dict
 from data.store import load_items, save_items
 from api.scoring.auto_recalc import safe_auto_recalculate, mark_ingestion
 
@@ -6,7 +9,7 @@ router = APIRouter()
 
 
 @router.post("/radio")
-def ingest_radio(payload: dict, background_tasks: BackgroundTasks):
+def ingest_radio(payload: Dict, background_tasks: BackgroundTasks):
     items = load_items()
 
     records = payload.get("items")
@@ -19,27 +22,23 @@ def ingest_radio(payload: dict, background_tasks: BackgroundTasks):
         title = record.get("title")
         artist = record.get("artist")
         plays = int(record.get("plays", 0))
-        region = record.get("region", "National")
 
         if not title or not artist:
             continue
 
         for item in items:
-            if item["title"] == title and item["artist"] == artist:
+            if item.get("title") == title and item.get("artist") == artist:
                 item["radio"] = item.get("radio", 0) + plays
-
-                # --- REGION TRACKING ---
-                regions = item.setdefault("regions", {})
-                regions[region] = regions.get(region, 0) + plays
-
                 ingested += 1
                 break
 
     save_items(items)
 
+    # SAFE AUTO-RECALCULATE (debounced, background)
     mark_ingestion()
     background_tasks.add_task(safe_auto_recalculate)
 
-    return {"status": "ok", "ingested": ingested}
-    @router.post("/radio", operation_id="ingest_radio")
-def ingest_radio(payload: dict, background_tasks: BackgroundTasks):
+    return {
+        "status": "ok",
+        "ingested": ingested
+    }
