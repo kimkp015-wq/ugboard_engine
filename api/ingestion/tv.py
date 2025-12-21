@@ -14,13 +14,26 @@ def ingest_tv(
     payload: Union[Dict, List[Dict]],
     background_tasks: BackgroundTasks
 ):
+    """
+    TV ingestion:
+    - Accepts single object OR bulk list
+    - Updates ONLY existing songs
+    - Never creates new songs
+    - Never crashes
+    """
+
     items = load_items()
 
-    # Normalize payload
+    # Normalize payload to list
     if isinstance(payload, dict):
-        records = payload.get("items", [payload])
+        records = payload.get("items", payload)
+        if isinstance(records, dict):
+            records = [records]
     else:
         records = payload
+
+    if not isinstance(records, list):
+        return {"status": "ok", "ingested": 0}
 
     ingested = 0
 
@@ -32,21 +45,15 @@ def ingest_tv(
         if not title or not artist:
             continue
 
-        song = next(
-            (i for i in items if i["title"] == title and i["artist"] == artist),
-            None
-        )
-
-        # TV does NOT auto-create songs (YouTube is the source of truth)
-        if not song:
-            continue
-
-        song["tv"] = song.get("tv", 0) + plays
-        ingested += 1
+        for item in items:
+            if item.get("title") == title and item.get("artist") == artist:
+                item["tv"] = int(item.get("tv", 0)) + plays
+                ingested += 1
+                break
 
     save_items(items)
 
-    # Safe auto-recalculation (debounced, background)
+    # SAFE auto-recalculate (debounced, background)
     mark_ingestion()
     background_tasks.add_task(safe_auto_recalculate)
 
