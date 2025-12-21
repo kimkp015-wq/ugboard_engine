@@ -1,15 +1,18 @@
 # api/ingestion/youtube.py
 
 from fastapi import APIRouter, BackgroundTasks
-from typing import List, Dict, Union
+from typing import Dict, List, Union
 from data.store import load_items, save_items
-from api.scoring.auto_recalc import safe_auto_recalculate
+from api.scoring.auto_recalc import safe_auto_recalculate, mark_ingestion
 
 router = APIRouter()
 
 
 @router.post("/youtube")
-def ingest_youtube(payload: Union[Dict, List[Dict]], background_tasks: BackgroundTasks):
+def ingest_youtube(
+    payload: Union[Dict, List[Dict]],
+    background_tasks: BackgroundTasks
+):
     items = load_items()
 
     if isinstance(payload, dict):
@@ -25,7 +28,10 @@ def ingest_youtube(payload: Union[Dict, List[Dict]], background_tasks: Backgroun
         if not title or not artist:
             continue
 
-        song = next((i for i in items if i["title"] == title and i["artist"] == artist), None)
+        song = next(
+            (i for i in items if i["title"] == title and i["artist"] == artist),
+            None
+        )
 
         if not song:
             song = {
@@ -43,7 +49,7 @@ def ingest_youtube(payload: Union[Dict, List[Dict]], background_tasks: Backgroun
 
     save_items(items)
 
-    # Trigger async safe auto-recalc
+    mark_ingestion()
     background_tasks.add_task(safe_auto_recalculate)
 
     return {"status": "ok", "ingested": ingested}

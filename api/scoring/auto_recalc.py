@@ -2,51 +2,84 @@
 
 import json
 import os
-from data.store import load_items, save_items
+import time
+from data.store import load_items
 from api.scoring.scoring import recalculate_all
 
 TOP100_PATH = "data/top100.json"
+STATE_PATH = "data/recalc_state.json"
+DEBOUNCE_SECONDS = 10
+
+
+def _read_state():
+    if not os.path.exists(STATE_PATH):
+        return {}
+    try:
+        with open(STATE_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _write_state(state: dict):
+    os.makedirs("data", exist_ok=True)
+    with open(STATE_PATH, "w") as f:
+        json.dump(state, f)
+
+
+def mark_ingestion():
+    """
+    Call this on EVERY ingestion.
+    """
+    state = _read_state()
+    state["last_ingestion"] = time.time()
+    _write_state(state)
 
 
 def safe_auto_recalculate():
     """
-    Safely update the Top100 chart based on current items metrics.
-    Should NOT crash the server.
+    Debounced, lock-aware, crash-proof auto recalculation.
     """
 
     try:
-        # Load current chart
+        # --- Debounce check ---
+        state = _read_state()
+        last = state.get("last_ingestion")
+
+        if not last:
+            return
+
+        if time.time() - last < DEBOUNCE_SECONDS:
+            # Too soon -- skip recalculation
+            return
+
+        # --- Load chart ---
         if not os.path.exists(TOP100_PATH):
             return
 
         with open(TOP100_PATH, "r") as f:
-            data = json.load(f)
+            chart = json.load(f)
 
-        # Respect chart lock
-        if data.get("locked"):
+        # Respect lock
+        if chart.get("locked"):
             return
 
-        # Load latest metrics
+        # --- Load & recalc ---
         items = load_items()
-
-        # Recalculate scores
         items = recalculate_all(items)
-
-        # Sort by score
         items.sort(key=lambda x: float(x.get("score", 0)), reverse=True)
 
-        # Reassign positions
         for idx, item in enumerate(items, 1):
             item["position"] = idx
 
-        data["items"] = items
+        chart["items"] = items
 
-        # Write atomically (safe write pattern)
-        temp_path = TOP100_PATH + ".tmp"
-        with open(temp_path, "w") as tf:
-            json.dump(data, tf, indent=2)
-        os.replace(temp_path, TOP100_PATH)
+        # --- Atomic write ---
+        temp = TOP100_PATH + ".tmp"
+        with open(temp, "w") as f:
+            json.dump(chart, f, indent=2)
+        os.replace(temp, TOP100_PATH)
 
     except Exception:
-        # Fail silently -- never crash
+        # ABSOLUTE SAFETY: never crash
         return

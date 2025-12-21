@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, BackgroundTasks
 from data.store import load_items, save_items
-from api.scoring.auto_recalc import safe_auto_recalculate
+from api.scoring.auto_recalc import safe_auto_recalculate, mark_ingestion
 
 router = APIRouter()
 
@@ -29,6 +29,8 @@ def ingest_radio(payload: dict, background_tasks: BackgroundTasks):
                 break
 
     save_items(items)
+
+    mark_ingestion()
     background_tasks.add_task(safe_auto_recalculate)
 
     return {"status": "ok", "ingested": ingested}
