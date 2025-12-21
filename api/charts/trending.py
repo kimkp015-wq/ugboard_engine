@@ -1,18 +1,27 @@
 from fastapi import APIRouter
-from data.store import load_items
+import json
+import os
 
 router = APIRouter()
 
+TOP100_PATH = "data/top100.json"
+
+
 @router.get("/trending")
 def get_trending():
-    items = load_items()
+    if not os.path.exists(TOP100_PATH):
+        return {
+            "status": "ok",
+            "count": 0,
+            "items": []
+        }
 
-    items = sorted(
-        items,
-        key=lambda x: x.get("score", 0),
-        reverse=True
-    )
+    with open(TOP100_PATH, "r") as f:
+        data = json.load(f)
 
+    items = data.get("items", [])
+
+    # Trending = top 10 by position/score (already sorted)
     return {
         "status": "ok",
         "count": min(10, len(items)),
