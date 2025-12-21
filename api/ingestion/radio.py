@@ -19,6 +19,7 @@ def ingest_radio(payload: dict, background_tasks: BackgroundTasks):
         title = record.get("title")
         artist = record.get("artist")
         plays = int(record.get("plays", 0))
+        region = record.get("region", "National")
 
         if not title or not artist:
             continue
@@ -26,6 +27,11 @@ def ingest_radio(payload: dict, background_tasks: BackgroundTasks):
         for item in items:
             if item["title"] == title and item["artist"] == artist:
                 item["radio"] = item.get("radio", 0) + plays
+
+                # --- REGION TRACKING ---
+                regions = item.setdefault("regions", {})
+                regions[region] = regions.get(region, 0) + plays
+
                 ingested += 1
                 break
 
