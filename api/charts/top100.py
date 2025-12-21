@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException
-from data.store import load_items, save_items
 from api.scoring.scoring import calculate_score
 import json
 import os
@@ -13,9 +12,6 @@ except Exception:
     apply_boosts = None
 
 
-# -----------------------------
-# Resolve Top100 JSON file path
-# -----------------------------
 def resolve_top100_path():
     candidates = [
         "api/data/top100.json",
@@ -25,123 +21,58 @@ def resolve_top100_path():
         "/app/data/top100.json",
         "/app/ingestion/top100.json",
     ]
-
     for path in candidates:
         if os.path.exists(path):
             return path
-
     return None
 
 
-# -----------------------------
-# GET Top 100
-# -----------------------------
 @router.get("/top100")
 def get_top100():
     path = resolve_top100_path()
-
     if not path:
-        raise HTTPException(
-            status_code=500,
-            detail="Top100 file not found in any known location"
-        )
+        raise HTTPException(500, "Top100 file not found")
 
-    try:
-        with open(path, "r") as f:
-            data = json.load(f)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to read Top100 file: {str(e)}"
-        )
+    with open(path, "r") as f:
+        data = json.load(f)
 
     items = data.get("items", [])
-
-    return {
-        "status": "ok",
-        "count": len(items),
-        "items": items
-    }
+    return {"status": "ok", "count": len(items), "items": items}
 
 
-# -----------------------------
-# POST Recalculate Top 100
-# -----------------------------
 @router.post("/top100/recalculate")
 def recalculate_top100():
     path = resolve_top100_path()
-
     if not path:
-        raise HTTPException(
-            status_code=500,
-            detail="Top100 file not found"
-        )
+        raise HTTPException(500, "Top100 file not found")
 
-    try:
-        with open(path, "r") as f:
-            data = json.load(f)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to read Top100 file: {str(e)}"
-        )
+    with open(path, "r") as f:
+        data = json.load(f)
 
     items = data.get("items", [])
-
     if not isinstance(items, list):
-        raise HTTPException(
-            status_code=500,
-            detail="Invalid Top100 format"
-        )
+        raise HTTPException(500, "Invalid Top100 format")
 
-    # -----------------------------
-    # Calculate scores
-    # -----------------------------
     for item in items:
         try:
             item["score"] = calculate_score(item)
         except Exception:
-            item["score"] = 0  # scoring must never crash charts
+            item["score"] = 0
 
-    # -----------------------------
-    # Apply boosts (optional)
-    # -----------------------------
-    if apply_boosts is not None:
+    if apply_boosts:
         try:
             items = apply_boosts(items)
         except Exception:
-            pass  # boosts must NEVER crash charts
+            pass
 
-    # -----------------------------
-    # Sort by score (descending)
-    # -----------------------------
-    items = sorted(
-        items,
-        key=lambda x: float(x.get("score", 0)),
-        reverse=True
-    )
+    items = sorted(items, key=lambda x: float(x.get("score", 0)), reverse=True)
 
-    # -----------------------------
-    # Reassign positions
-    # -----------------------------
-    for index, item in enumerate(items, start=1):
-        item["position"] = index
+    for i, item in enumerate(items, start=1):
+        item["position"] = i
 
     data["items"] = items
 
-    # -----------------------------
-    # Write back to file
-    # -----------------------------
-    try:
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to write Top100 file: {str(e)}"
-        )
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
 
-    return {
-        "status": "recalculated",
-        "count": len(items)
-    }
+    return {"status": "recalculated", "count": len(items)}
