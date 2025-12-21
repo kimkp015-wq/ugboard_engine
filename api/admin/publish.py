@@ -1,26 +1,17 @@
 from fastapi import APIRouter, HTTPException
 import json
-import os
 from pathlib import Path
 
 router = APIRouter()
 
-# Canonical Top100 storage location
 TOP100_PATH = Path("data/top100.json")
 
 
+# -----------------------------
+# Publish Top100
+# -----------------------------
 @router.post("/publish/top100")
 def publish_top100(payload: dict):
-    """
-    Publish Top100 chart manually.
-    Expects:
-    {
-      "items": [
-        { "title": "...", "artist": "..." }
-      ]
-    }
-    """
-
     items = payload.get("items")
 
     if not isinstance(items, list) or len(items) == 0:
@@ -51,16 +42,15 @@ def publish_top100(payload: dict):
     if not clean_items:
         raise HTTPException(
             status_code=400,
-            detail="No valid items found to publish"
+            detail="No valid items to publish"
         )
 
-    # Ensure data directory exists
     TOP100_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    # Write Top100 file
     with open(TOP100_PATH, "w") as f:
         json.dump(
             {
+                "locked": False,
                 "items": clean_items
             },
             f,
@@ -70,4 +60,33 @@ def publish_top100(payload: dict):
     return {
         "status": "ok",
         "published": len(clean_items)
+    }
+
+
+# -----------------------------
+# Lock Top100
+# -----------------------------
+@router.post("/publish/top100/lock")
+def lock_top100():
+    if not TOP100_PATH.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Top100 not published yet"
+        )
+
+    with open(TOP100_PATH, "r") as f:
+        data = json.load(f)
+
+    if data.get("locked") is True:
+        return {
+            "status": "already_locked"
+        }
+
+    data["locked"] = True
+
+    with open(TOP100_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+
+    return {
+        "status": "locked"
     }
