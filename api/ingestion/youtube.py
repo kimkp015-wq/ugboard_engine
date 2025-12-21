@@ -1,32 +1,30 @@
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter
 from typing import List, Dict, Union
 from data.store import load_items, save_items
-from api.utils.recalc import auto_recalculate
+from api.charts.recalculate import safe_recalculate_top100
 
 router = APIRouter()
 
-@router.post("/ingest/youtube")
-def ingest_youtube(
-    payload: Union[Dict, List[Dict]],
-    background_tasks: BackgroundTasks
-):
+
+@router.post("/youtube")
+def ingest_youtube(payload: Union[Dict, List[Dict]]):
     items = load_items()
 
-    if isinstance(payload, dict):
-        payload = [payload]
+    # normalize to list
+    records = payload if isinstance(payload, list) else [payload]
 
     ingested = 0
 
-    for entry in payload:
-        title = entry.get("title")
-        artist = entry.get("artist")
-        views = int(entry.get("views", 0) or 0)
+    for record in records:
+        title = record.get("title")
+        artist = record.get("artist")
+        views = int(record.get("views", 0))
 
         if not title or not artist:
             continue
 
         song = next(
-            (i for i in items if i.get("title") == title and i.get("artist") == artist),
+            (i for i in items if i["title"] == title and i["artist"] == artist),
             None
         )
 
@@ -45,9 +43,7 @@ def ingest_youtube(
         ingested += 1
 
     save_items(items)
-
-    # schedule auto recalc
-    background_tasks.add_task(auto_recalculate)
+    safe_recalculate_top100()
 
     return {
         "status": "ok",

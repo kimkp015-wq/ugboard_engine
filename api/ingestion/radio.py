@@ -1,53 +1,38 @@
-from fastapi import APIRouter, BackgroundTasks
-from typing import List, Dict, Union
+from fastapi import APIRouter
+from typing import Dict, List, Union
 from data.store import load_items, save_items
-from api.utils.recalc import auto_recalculate
+from api.charts.recalculate import safe_recalculate_top100
 
 router = APIRouter()
 
-@router.post("/ingest/youtube")
-def ingest_youtube(
-    payload: Union[Dict, List[Dict]],
-    background_tasks: BackgroundTasks
-):
+
+@router.post("/radio")
+def ingest_radio(payload: Union[Dict, List[Dict]]):
     items = load_items()
 
-    if isinstance(payload, dict):
-        payload = [payload]
+    records = payload if isinstance(payload, list) else payload.get("items", [payload])
 
     ingested = 0
 
-    for entry in payload:
-        title = entry.get("title")
-        artist = entry.get("artist")
-        views = int(entry.get("views", 0) or 0)
+    for record in records:
+        title = record.get("title")
+        artist = record.get("artist")
+        plays = int(record.get("plays", 0))
 
         if not title or not artist:
             continue
 
         song = next(
-            (i for i in items if i.get("title") == title and i.get("artist") == artist),
+            (i for i in items if i["title"] == title and i["artist"] == artist),
             None
         )
 
-        if not song:
-            song = {
-                "title": title,
-                "artist": artist,
-                "youtube": 0,
-                "radio": 0,
-                "tv": 0,
-                "score": 0
-            }
-            items.append(song)
-
-        song["youtube"] += views
-        ingested += 1
+        if song:
+            song["radio"] = song.get("radio", 0) + plays
+            ingested += 1
 
     save_items(items)
-
-    # schedule auto recalc
-    background_tasks.add_task(auto_recalculate)
+    safe_recalculate_top100()
 
     return {
         "status": "ok",

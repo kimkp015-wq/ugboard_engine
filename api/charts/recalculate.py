@@ -1,19 +1,59 @@
-from api.storage import db
+# api/charts/recalculate.py
+
+import json
+import os
+from api.scoring.scoring import calculate_score
+
+TOP100_PATH = "data/top100.json"
+ITEMS_PATH = "data/items.json"
 
 
-from data.store import load_items, save_items
-def recalculate_top100():
-    items = list(db.top100.find({}, {"_id": 0}))
+def safe_recalculate_top100():
+    """
+    Recalculates Top100 safely.
+    NEVER raises errors.
+    """
 
-    # simple ordering rule (you can improve later)
-    items.sort(key=lambda x: x.get("score", 0), reverse=True)
+    try:
+        if not os.path.exists(ITEMS_PATH):
+            return
 
-    for index, item in enumerate(items, start=1):
-        db.top100.update_one(
-            {"title": item["title"], "artist": item["artist"]},
-            {"$set": {"position": index}}
+        with open(ITEMS_PATH, "r") as f:
+            items = json.load(f)
+
+        if not isinstance(items, list):
+            return
+
+        # calculate scores
+        for item in items:
+            try:
+                item["score"] = calculate_score(item)
+            except Exception:
+                item["score"] = 0
+
+        # sort by score
+        items = sorted(
+            items,
+            key=lambda x: x.get("score", 0),
+            reverse=True
         )
 
-    return len(items)
-    items = load_items()
-save_items(items)
+        # assign positions
+        for idx, item in enumerate(items, start=1):
+            item["position"] = idx
+
+        os.makedirs("data", exist_ok=True)
+
+        with open(TOP100_PATH, "w") as f:
+            json.dump(
+                {
+                    "locked": False,
+                    "items": items
+                },
+                f,
+                indent=2
+            )
+
+    except Exception:
+        # SILENT FAIL (by design)
+        return
