@@ -1,29 +1,53 @@
-from fastapi import BackgroundTasksfrom fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks
+from typing import List, Dict, Union
 from data.store import load_items, save_items
-from api.scoring.scoring import recalculate_all
+from api.utils.recalc import auto_recalculate
 
 router = APIRouter()
 
-@router.post("/ingest/tv")
-def ingest_tv(payload: dict):
+@router.post("/ingest/youtube")
+def ingest_youtube(
+    payload: Union[Dict, List[Dict]],
+    background_tasks: BackgroundTasks
+):
     items = load_items()
 
-    records = payload.get("items", [payload])
+    if isinstance(payload, dict):
+        payload = [payload]
+
     ingested = 0
 
-    for record in records:
-        title = record.get("title")
-        artist = record.get("artist")
-        plays = int(record.get("plays", 0))
+    for entry in payload:
+        title = entry.get("title")
+        artist = entry.get("artist")
+        views = int(entry.get("views", 0) or 0)
 
-        for item in items:
-            if item["title"] == title and item["artist"] == artist:
-                item["tv"] += plays
-                ingested += 1
-                break
+        if not title or not artist:
+            continue
 
-    items = recalculate_all(items)
+        song = next(
+            (i for i in items if i.get("title") == title and i.get("artist") == artist),
+            None
+        )
+
+        if not song:
+            song = {
+                "title": title,
+                "artist": artist,
+                "youtube": 0,
+                "radio": 0,
+                "tv": 0,
+                "score": 0
+            }
+            items.append(song)
+
+        song["youtube"] += views
+        ingested += 1
+
     save_items(items)
+
+    # schedule auto recalc
+    background_tasks.add_task(auto_recalculate)
 
     return {
         "status": "ok",

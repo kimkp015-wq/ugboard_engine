@@ -1,12 +1,15 @@
-from fastapi import BackgroundTasks
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks
 from typing import List, Dict, Union
 from data.store import load_items, save_items
+from api.utils.recalc import auto_recalculate
 
 router = APIRouter()
 
 @router.post("/ingest/youtube")
-def ingest_youtube(payload: Union[Dict, List[Dict]]):
+def ingest_youtube(
+    payload: Union[Dict, List[Dict]],
+    background_tasks: BackgroundTasks
+):
     items = load_items()
 
     if isinstance(payload, dict):
@@ -17,13 +20,13 @@ def ingest_youtube(payload: Union[Dict, List[Dict]]):
     for entry in payload:
         title = entry.get("title")
         artist = entry.get("artist")
-        views = int(entry.get("views", 0))
+        views = int(entry.get("views", 0) or 0)
 
         if not title or not artist:
             continue
 
         song = next(
-            (i for i in items if i["title"] == title and i["artist"] == artist),
+            (i for i in items if i.get("title") == title and i.get("artist") == artist),
             None
         )
 
@@ -42,6 +45,9 @@ def ingest_youtube(payload: Union[Dict, List[Dict]]):
         ingested += 1
 
     save_items(items)
+
+    # schedule auto recalc
+    background_tasks.add_task(auto_recalculate)
 
     return {
         "status": "ok",
