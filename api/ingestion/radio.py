@@ -32,4 +32,5 @@ def ingest_radio(payload: dict):
     return {
         "status": "ok",
         "ingested": ingested
-    }
+    items = load_items()
+save_items(items)

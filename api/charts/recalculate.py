@@ -1,6 +1,7 @@
 from api.storage import db
 
 
+from data.store import load_items, save_items
 def recalculate_top100():
     items = list(db.top100.find({}, {"_id": 0}))
 
@@ -14,3 +15,5 @@ def recalculate_top100():
         )
 
     return len(items)
+    items = load_items()
+save_items(items)

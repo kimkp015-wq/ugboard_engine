@@ -43,6 +43,8 @@ def ingest_youtube(payload: Union[Dict, List[Dict]]):
 
     save_items(items)
 
+items = load_items()
+save_items(items)
     return {
         "status": "ok",
         "ingested": ingested

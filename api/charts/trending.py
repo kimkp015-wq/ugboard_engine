@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 import json
 import os
+from data.store import load_items, save_items
 
 router = APIRouter()
 
@@ -22,7 +23,8 @@ def get_trending():
             data = json.load(f)
 
         items = data.get("items", [])
-
+    items = load_items()
+save_items(items)
         return {
             "status": "ok",
             "count": len(items),

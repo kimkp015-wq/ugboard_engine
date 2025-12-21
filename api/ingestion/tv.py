@@ -25,7 +25,9 @@ def ingest_tv(payload: dict):
                 item["tv"] = item.get("tv", 0) + plays
                 ingested += 1
                 break
-
+    items = load_items()
+save_items(items)
+        
     items = recalculate_all(items)
     save_items(items)
 
