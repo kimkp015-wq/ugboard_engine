@@ -1,0 +1,35 @@
+# data/ingestion_log.py
+
+import json
+from pathlib import Path
+from datetime import datetime
+
+LOG_FILE = Path("data/ingestion_log.json")
+
+
+def log_ingestion(source: str, ingested: int, payload):
+    """
+    Safe ingestion logger.
+    Must NEVER crash ingestion.
+    """
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+        if LOG_FILE.exists():
+            logs = json.loads(LOG_FILE.read_text())
+            if not isinstance(logs, list):
+                logs = []
+        else:
+            logs = []
+
+        logs.append({
+            "timestamp": datetime.utcnow().isoformat(),
+            "source": source,
+            "ingested": ingested,
+            "payload_size": len(payload) if isinstance(payload, list) else 1
+        })
+
+        LOG_FILE.write_text(json.dumps(logs, indent=2))
+
+    except Exception:
+        pass  # logging must NEVER crash ingestion

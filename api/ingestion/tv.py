@@ -4,6 +4,12 @@ from fastapi import APIRouter
 from data.store import load_items, save_items
 from api.scoring.scoring import recalculate_all
 
+# SAFE OPTIONAL LOGGING
+try:
+    from data.ingestion_log import log_ingestion
+except Exception:
+    log_ingestion = None
+
 router = APIRouter()
 
 
@@ -31,8 +37,13 @@ def ingest_tv(payload: dict):
                 ingested += 1
                 break
 
+    # Auto recalculate safely
     items = recalculate_all(items)
     save_items(items)
+
+    # Log ingestion safely
+    if log_ingestion:
+        log_ingestion("tv", ingested, records)
 
     return {
         "status": "ok",
