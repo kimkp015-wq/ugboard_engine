@@ -7,22 +7,8 @@ router = APIRouter()
 
 @router.post("/youtube")
 def ingest_youtube(payload: Union[Dict, List[Dict]]):
-    """
-    Accepts:
-    - Single item (dict)
-    - Bulk items (list of dicts)
-
-    Each item:
-    {
-      "title": "Song",
-      "artist": "Artist",
-      "views": 100
-    }
-    """
-
     items = load_items()
 
-    # Normalize to list
     if isinstance(payload, dict):
         payload = [payload]
 
@@ -36,13 +22,11 @@ def ingest_youtube(payload: Union[Dict, List[Dict]]):
         if not title or not artist:
             continue
 
-        # Find existing song
         song = next(
-            (i for i in items if i.get("title") == title and i.get("artist") == artist),
+            (i for i in items if i["title"] == title and i["artist"] == artist),
             None
         )
 
-        # Create if missing
         if not song:
             song = {
                 "title": title,
