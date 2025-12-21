@@ -1,20 +1,14 @@
 # api/ingestion/radio.py
 
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks
 from data.store import load_items, save_items
-from api.scoring.scoring import recalculate_all
-
-# SAFE OPTIONAL LOGGING
-try:
-    from data.ingestion_log import log_ingestion
-except Exception:
-    log_ingestion = None
+from api.scoring.auto_recalc import safe_auto_recalculate
 
 router = APIRouter()
 
 
 @router.post("/radio")
-def ingest_radio(payload: dict):
+def ingest_radio(payload: dict, background_tasks: BackgroundTasks):
     items = load_items()
 
     records = payload.get("items")
@@ -28,24 +22,13 @@ def ingest_radio(payload: dict):
         artist = record.get("artist")
         plays = int(record.get("plays", 0))
 
-        if not title or not artist:
-            continue
-
         for item in items:
             if item["title"] == title and item["artist"] == artist:
                 item["radio"] = item.get("radio", 0) + plays
                 ingested += 1
                 break
 
-    # Auto recalculate safely
-    items = recalculate_all(items)
     save_items(items)
+    background_tasks.add_task(safe_auto_recalculate)
 
-    # Log ingestion safely
-    if log_ingestion:
-        log_ingestion("radio", ingested, records)
-
-    return {
-        "status": "ok",
-        "ingested": ingested
-    }
+    return {"status": "ok", "ingested": ingested}
