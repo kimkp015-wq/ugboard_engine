@@ -1,28 +1,18 @@
 from fastapi import APIRouter, HTTPException
+from api.scoring.scoring import calculate_score
 import json
 import os
 
-from api.scoring.scoring import calculate_score
-from data.store import load_items
-
 router = APIRouter()
-
-# --- SAFE OPTIONAL BOOST IMPORT ---
-try:
-    from api.charts.boost import apply_boosts
-except Exception:
-    apply_boosts = None
 
 
 # -----------------------------
-# Resolve Top100 JSON file path
+# Resolve Top100 JSON path
 # -----------------------------
 def resolve_top100_path():
     candidates = [
         "data/top100.json",
-        "api/data/top100.json",
-        "/app/data/top100.json",
-        "/app/api/data/top100.json",
+        "/app/data/top100.json"
     ]
 
     for path in candidates:
@@ -33,7 +23,7 @@ def resolve_top100_path():
 
 
 # -----------------------------
-# GET Top 100
+# GET Top100 (SAFE)
 # -----------------------------
 @router.get("/top100")
 def get_top100():
@@ -52,7 +42,7 @@ def get_top100():
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to read Top100 file: {str(e)}"
+            detail=f"Failed to read Top100: {str(e)}"
         )
 
     items = data.get("items", [])
@@ -60,12 +50,13 @@ def get_top100():
     return {
         "status": "ok",
         "count": len(items),
+        "locked": data.get("locked", False),
         "items": items
     }
 
 
 # -----------------------------
-# POST Recalculate Top 100
+# POST Recalculate Top100
 # -----------------------------
 @router.post("/top100/recalculate")
 def recalculate_top100():
@@ -73,21 +64,22 @@ def recalculate_top100():
 
     if not path:
         raise HTTPException(
-            status_code=500,
-            detail="Top100 file not found"
+            status_code=404,
+            detail="Top100 not published yet"
         )
 
-    # Load chart
-    try:
-        with open(path, "r") as f:
-            data = json.load(f)
-    except Exception as e:
+    with open(path, "r") as f:
+        data = json.load(f)
+
+    # 🔒 LOCK ENFORCEMENT
+    if data.get("locked") is True:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to read Top100 file: {str(e)}"
+            status_code=403,
+            detail="Top100 is locked and cannot be recalculated"
         )
 
     items = data.get("items", [])
+
     if not isinstance(items, list):
         raise HTTPException(
             status_code=500,
@@ -95,46 +87,13 @@ def recalculate_top100():
         )
 
     # -----------------------------
-    # Merge ingestion metrics
-    # -----------------------------
-    metrics = load_items()
-
-    for chart_item in items:
-        match = next(
-            (
-                m for m in metrics
-                if m.get("title") == chart_item.get("title")
-                and m.get("artist") == chart_item.get("artist")
-            ),
-            None
-        )
-
-        if match:
-            chart_item["youtube"] = match.get("youtube", 0)
-            chart_item["radio"] = match.get("radio", 0)
-            chart_item["tv"] = match.get("tv", 0)
-        else:
-            chart_item.setdefault("youtube", 0)
-            chart_item.setdefault("radio", 0)
-            chart_item.setdefault("tv", 0)
-
-    # -----------------------------
-    # Calculate scores
+    # Calculate scores safely
     # -----------------------------
     for item in items:
         try:
             item["score"] = calculate_score(item)
         except Exception:
-            item["score"] = 0  # scoring must never crash charts
-
-    # -----------------------------
-    # Apply boosts (optional)
-    # -----------------------------
-    if apply_boosts is not None:
-        try:
-            items = apply_boosts(items)
-        except Exception:
-            pass
+            item["score"] = 0
 
     # -----------------------------
     # Sort by score
@@ -154,16 +113,10 @@ def recalculate_top100():
     data["items"] = items
 
     # -----------------------------
-    # Save chart
+    # Write back
     # -----------------------------
-    try:
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to write Top100 file: {str(e)}"
-        )
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
 
     return {
         "status": "recalculated",
