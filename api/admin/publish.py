@@ -1,15 +1,12 @@
 from fastapi import APIRouter, HTTPException
 import json
-from pathlib import Path
+import os
 
 router = APIRouter()
 
-TOP100_PATH = Path("data/top100.json")
+TOP100_PATH = "data/top100.json"
 
 
-# -----------------------------
-# Publish Top100
-# -----------------------------
 @router.post("/publish/top100")
 def publish_top100(payload: dict):
     items = payload.get("items")
@@ -39,13 +36,7 @@ def publish_top100(payload: dict):
             "score": 0
         })
 
-    if not clean_items:
-        raise HTTPException(
-            status_code=400,
-            detail="No valid items to publish"
-        )
-
-    TOP100_PATH.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs("data", exist_ok=True)
 
     with open(TOP100_PATH, "w") as f:
         json.dump(
@@ -63,12 +54,9 @@ def publish_top100(payload: dict):
     }
 
 
-# -----------------------------
-# Lock Top100
-# -----------------------------
 @router.post("/publish/top100/lock")
 def lock_top100():
-    if not TOP100_PATH.exists():
+    if not os.path.exists(TOP100_PATH):
         raise HTTPException(
             status_code=404,
             detail="Top100 not published yet"
@@ -76,11 +64,6 @@ def lock_top100():
 
     with open(TOP100_PATH, "r") as f:
         data = json.load(f)
-
-    if data.get("locked") is True:
-        return {
-            "status": "already_locked"
-        }
 
     data["locked"] = True
 
