@@ -7,8 +7,11 @@ router = APIRouter()
 def get_trending():
     items = load_items()
 
-    # Sort by score, highest first
-    items = sorted(items, key=lambda x: x.get("score", 0), reverse=True)
+    items = sorted(
+        items,
+        key=lambda x: x.get("score", 0),
+        reverse=True
+    )
 
     return {
         "status": "ok",
