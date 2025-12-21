@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks
 from data.store import load_items, save_items
 from api.scoring.auto import safe_auto_recalculate
 
@@ -6,7 +6,10 @@ router = APIRouter()
 
 
 @router.post("/ingest/tv")
-def ingest_tv(payload: dict):
+def ingest_tv(
+    payload: dict,
+    background_tasks: BackgroundTasks
+):
     items = load_items()
 
     records = payload.get("items")
@@ -28,8 +31,8 @@ def ingest_tv(payload: dict):
 
     save_items(items)
 
-    # 🔧 SAFE AUTO RECALC
-    safe_auto_recalculate(items)
+    # 🔥 BACKGROUND AUTO RECALC
+    background_tasks.add_task(safe_auto_recalculate, items)
 
     return {
         "status": "ok",
