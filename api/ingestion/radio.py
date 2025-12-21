@@ -1,33 +1,28 @@
 from fastapi import APIRouter
-from typing import List, Dict, Union
 from data.store import load_items, save_items
+from api.scoring.scoring import recalculate_all
 
 router = APIRouter()
 
-
-@router.post("/radio")
-def ingest_radio(payload: Union[Dict, List[Dict]]):
+@router.post("/ingest/radio")
+def ingest_radio(payload: dict):
     items = load_items()
 
-    if isinstance(payload, dict):
-        payload = [payload]
-
+    records = payload.get("items", [payload])
     ingested = 0
 
-    for entry in payload:
-        title = entry.get("title")
-        artist = entry.get("artist")
-        plays = int(entry.get("plays", 0))
-
-        if not title or not artist:
-            continue
+    for record in records:
+        title = record.get("title")
+        artist = record.get("artist")
+        plays = int(record.get("plays", 0))
 
         for item in items:
             if item["title"] == title and item["artist"] == artist:
-                item["radio"] = item.get("radio", 0) + plays
+                item["radio"] += plays
                 ingested += 1
                 break
 
+    items = recalculate_all(items)
     save_items(items)
 
     return {

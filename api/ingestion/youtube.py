@@ -4,8 +4,7 @@ from data.store import load_items, save_items
 
 router = APIRouter()
 
-
-@router.post("/youtube")
+@router.post("/ingest/youtube")
 def ingest_youtube(payload: Union[Dict, List[Dict]]):
     items = load_items()
 

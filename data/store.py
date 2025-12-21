@@ -1,29 +1,42 @@
-# data/store.py
-
 import json
 from pathlib import Path
+from typing import List, Dict
 
-ITEMS_FILE = Path("data/items.json")
-TOP100_FILE = Path("data/top100.json")
+# Base data directory
+DATA_DIR = Path("data")
+
+# Main items storage (used by ingestion & trending)
+ITEMS_FILE = DATA_DIR / "items.json"
 
 
-def load_items():
-    if not ITEMS_FILE.exists():
+def load_items() -> List[Dict]:
+    """
+    Load all tracked songs/items.
+    Safe: returns empty list if file does not exist or is invalid.
+    """
+    try:
+        if not ITEMS_FILE.exists():
+            return []
+
+        raw = ITEMS_FILE.read_text()
+        data = json.loads(raw)
+
+        if not isinstance(data, list):
+            return []
+
+        return data
+
+    except Exception:
+        # Never crash the engine because of bad data
         return []
-    return json.loads(ITEMS_FILE.read_text())
 
 
-def save_items(items):
-    ITEMS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    ITEMS_FILE.write_text(json.dumps(items, indent=2))
+def save_items(items: List[Dict]) -> None:
+    """
+    Save items safely to disk.
+    """
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-
-def load_top100():
-    if not TOP100_FILE.exists():
-        return {"items": []}
-    return json.loads(TOP100_FILE.read_text())
-
-
-def save_top100(data):
-    TOP100_FILE.parent.mkdir(parents=True, exist_ok=True)
-    TOP100_FILE.write_text(json.dumps(data, indent=2))
+    ITEMS_FILE.write_text(
+        json.dumps(items, indent=2)
+    )
