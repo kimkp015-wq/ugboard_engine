@@ -12,7 +12,11 @@ def log_audit(entry: dict):
         "timestamp",
         datetime.utcnow().isoformat()
     )
-
+def get_last_publish_event(week: str) -> dict | None:
+    """
+    Returns last publish audit record for the given chart week,
+    or None if not found.
+    """
     if AUDIT_FILE.exists():
         data = json.loads(AUDIT_FILE.read_text())
     else:
