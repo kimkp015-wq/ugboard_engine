@@ -1,75 +1,44 @@
 from fastapi import APIRouter, HTTPException
+from data.region_store import publish_region, is_frozen
+from pathlib import Path
 import json
-import os
+from datetime import date
 
 router = APIRouter()
 
-TOP100_PATH = "data/top100.json"
+ITEMS_FILE = Path("data/items.json")
 
 
-@router.post("/publish/top100")
-def publish_top100(payload: dict):
-    items = payload.get("items")
+@router.post("/publish/region/{region}")
+def publish_region_chart(region: str):
+    week = date.today().isoformat()
 
-    if not isinstance(items, list) or len(items) == 0:
+    if is_frozen(region, week):
         raise HTTPException(
-            status_code=400,
-            detail="items must be a non-empty list"
+            status_code=409,
+            detail="Region chart already published for this week"
         )
 
-    clean_items = []
+    if not ITEMS_FILE.exists():
+        raise HTTPException(status_code=500, detail="Items store missing")
 
-    for index, item in enumerate(items, start=1):
-        title = item.get("title")
-        artist = item.get("artist")
+    items = json.loads(ITEMS_FILE.read_text())
 
-        if not title or not artist:
-            continue
+    # Filter by region
+    region_items = [
+        v for v in items.values()
+        if v.get("region") == region.lower()
+    ]
 
-        clean_items.append({
-            "position": index,
-            "title": title,
-            "artist": artist,
-            "youtube": 0,
-            "radio": 0,
-            "tv": 0,
-            "score": 0
-        })
+    # Sort by score DESC
+    region_items.sort(key=lambda x: x.get("score", 0), reverse=True)
 
-    os.makedirs("data", exist_ok=True)
+    top5 = region_items[:5]
 
-    with open(TOP100_PATH, "w") as f:
-        json.dump(
-            {
-                "locked": False,
-                "items": clean_items
-            },
-            f,
-            indent=2
-        )
+    publish_region(region.lower(), top5, week)
 
     return {
-        "status": "ok",
-        "published": len(clean_items)
-    }
-
-
-@router.post("/publish/top100/lock")
-def lock_top100():
-    if not os.path.exists(TOP100_PATH):
-        raise HTTPException(
-            status_code=404,
-            detail="Top100 not published yet"
-        )
-
-    with open(TOP100_PATH, "r") as f:
-        data = json.load(f)
-
-    data["locked"] = True
-
-    with open(TOP100_PATH, "w") as f:
-        json.dump(data, f, indent=2)
-
-    return {
-        "status": "locked"
+        "status": "published",
+        "region": region.lower(),
+        "count": len(top5)
     }
