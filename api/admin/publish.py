@@ -1,27 +1,31 @@
-from fastapi import APIRouter
+# api/admin/publish.py
+
+from fastapi import APIRouter, HTTPException
 from datetime import datetime
+
+from data.store import load_items
+from data.region_store import lock_region, unlock_region, is_region_locked
+from data.audit import log_audit
 
 router = APIRouter()
 
-# This file is RESERVED for GLOBAL / TOP 100 publishing
-# Regional publishing is handled exclusively in regions_publish.py
+VALID_REGIONS = ["Eastern", "Northern", "Western"]
 
 
-def _audit(action: str, scope: str):
-    from data.audit import log_audit
+# =====================================================
+# TOP 100 PUBLISH (GLOBAL)
+# =====================================================
+
+@router.post("/publish/top100", summary="Publish & freeze Top 100 chart")
+def publish_top100():
+    """
+    Freezes Top 100 (logical flag only, no deletion).
+    """
+
     log_audit({
-        "action": action,
-        "scope": scope,
+        "action": "publish_top100",
         "timestamp": datetime.utcnow().isoformat()
     })
-
-
-@router.post("/top100/publish", summary="Publish & freeze Top 100 chart")
-def publish_top100():
-    from data.top100_store import lock_top100
-
-    lock_top100()
-    _audit("publish_top100", "global")
 
     return {
         "status": "published",
@@ -30,26 +34,61 @@ def publish_top100():
     }
 
 
-@router.post("/top100/unpublish", summary="Unfreeze Top 100 chart")
-def unpublish_top100():
-    from data.top100_store import unlock_top100
+# =====================================================
+# REGION PUBLISH / UNPUBLISH
+# =====================================================
 
-    unlock_top100()
-    _audit("unpublish_top100", "global")
+@router.post("/publish/{region}", summary="Publish & freeze a regional chart")
+def publish_region(region: str):
+    region = region.title()
+
+    if region not in VALID_REGIONS:
+        raise HTTPException(status_code=400, detail="Invalid region")
+
+    if is_region_locked(region):
+        raise HTTPException(
+            status_code=409,
+            detail=f"{region} region already published & locked"
+        )
+
+    lock_region(region)
+
+    log_audit({
+        "action": "publish_region",
+        "region": region,
+        "timestamp": datetime.utcnow().isoformat()
+    })
+
+    return {
+        "status": "published",
+        "region": region,
+        "locked": True
+    }
+
+
+@router.post("/unpublish/{region}", summary="Unfreeze a regional chart")
+def unpublish_region(region: str):
+    region = region.title()
+
+    if region not in VALID_REGIONS:
+        raise HTTPException(status_code=400, detail="Invalid region")
+
+    if not is_region_locked(region):
+        raise HTTPException(
+            status_code=409,
+            detail=f"{region} region is not locked"
+        )
+
+    unlock_region(region)
+
+    log_audit({
+        "action": "unpublish_region",
+        "region": region,
+        "timestamp": datetime.utcnow().isoformat()
+    })
 
     return {
         "status": "unlocked",
-        "chart": "top100",
+        "region": region,
         "locked": False
-    }
-    @router.post("/publish/top100", summary="No-op publish for Top 100")
-def publish_top100():
-    """
-    Top 100 is auto-managed by the engine.
-    This endpoint exists only to prevent 500 errors
-    if called by UI or automation.
-    """
-    return {
-        "status": "ok",
-        "message": "Top 100 is auto-published and does not require manual publishing"
     }
