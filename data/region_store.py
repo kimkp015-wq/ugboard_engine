@@ -1,62 +1,36 @@
-# data/region_store.py
-
-import json
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from zoneinfo import ZoneInfo
+import json
 
-REGION_FILE = Path("data/region_charts.json")
-REGIONS = ["Eastern", "Northern", "Western"]
-
-
-def _eat_now():
-    return datetime.now(timezone(timedelta(hours=3)))
+STORE = Path("data/regions.json")
+EAT = ZoneInfo("Africa/Kampala")
 
 
-def current_week_key():
-    now = _eat_now()
-    year, week, _ = now.isocalendar()
-    return f"{year}-W{week}"
-
-
-def load_region_charts():
-    if not REGION_FILE.exists():
+def _load():
+    if not STORE.exists():
         return {}
-
-    try:
-        return json.loads(REGION_FILE.read_text())
-    except Exception:
-        return {}
+    return json.loads(STORE.read_text())
 
 
-def save_region_charts(data):
-    REGION_FILE.parent.mkdir(parents=True, exist_ok=True)
-    REGION_FILE.write_text(json.dumps(data, indent=2))
+def _save(data):
+    STORE.write_text(json.dumps(data, indent=2))
 
 
-def is_region_locked(region):
-    charts = load_region_charts()
-    region_data = charts.get(region)
-    if not region_data:
-        return False
-
-    return region_data.get("locked") is True
+def is_frozen(region: str, week: str) -> bool:
+    data = _load()
+    return region in data and data[region]["week"] == week
 
 
-def publish_region(region, items):
-    charts = load_region_charts()
-
-    if region in charts and charts[region].get("locked"):
-        raise ValueError("Region already locked for this week")
-
-    charts[region] = {
-        "week": current_week_key(),
-        "locked": True,
+def publish_region(region: str, items: list, week: str):
+    data = _load()
+    data[region] = {
+        "week": week,
+        "published_at": datetime.now(EAT).isoformat(),
         "items": items
     }
+    _save(data)
 
-    save_region_charts(charts)
 
-
-def get_region(region):
-    charts = load_region_charts()
-    return charts.get(region)
+def get_region(region: str):
+    return _load().get(region)
