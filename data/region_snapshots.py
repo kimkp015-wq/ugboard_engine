@@ -1,23 +1,21 @@
+# data/region_snapshots.py
+
 import json
 from pathlib import Path
-from datetime import datetime
 
-SNAPSHOT_DIR = Path("data/region_snapshots")
-SNAPSHOT_DIR.mkdir(exist_ok=True)
+SNAPSHOT_FILE = Path("data/region_snapshots.json")
 
-def snapshot_path(region: str) -> Path:
-    return SNAPSHOT_DIR / f"{region.lower()}.json"
+DEFAULT = {
+    "Eastern": [],
+    "Northern": [],
+    "Western": []
+}
 
-def save_region_snapshot(region: str, songs: list):
-    payload = {
-        "region": region,
-        "published_at": datetime.utcnow().isoformat(),
-        "songs": songs
-    }
-    snapshot_path(region).write_text(json.dumps(payload, indent=2))
+def load_region_snapshots():
+    if not SNAPSHOT_FILE.exists():
+        return DEFAULT.copy()
 
-def load_region_snapshot(region: str):
-    path = snapshot_path(region)
-    if not path.exists():
-        return None
-    return json.loads(path.read_text())
+    try:
+        return json.loads(SNAPSHOT_FILE.read_text())
+    except Exception:
+        return DEFAULT.copy()
