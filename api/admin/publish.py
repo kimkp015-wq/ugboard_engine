@@ -1,84 +1,44 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from datetime import datetime
 
 router = APIRouter()
 
-VALID_REGIONS = ["Eastern", "Northern", "Western"]
+# This file is RESERVED for GLOBAL / TOP 100 publishing
+# Regional publishing is handled exclusively in regions_publish.py
 
 
-# -----------------------------
-# Internal helpers (SAFE)
-# -----------------------------
-
-def _lock_region(region: str):
-    from data.region_store import lock_region
-    lock_region(region)
-
-
-def _unlock_region(region: str):
-    from data.region_store import unlock_region
-    unlock_region(region)
-
-
-def _is_region_locked(region: str) -> bool:
-    from data.region_store import is_region_locked
-    return is_region_locked(region)
-
-
-def _audit(action: str, region: str):
+def _audit(action: str, scope: str):
     from data.audit import log_audit
     log_audit({
         "action": action,
-        "region": region,
+        "scope": scope,
         "timestamp": datetime.utcnow().isoformat()
     })
 
 
-# -----------------------------
-# API Endpoints
-# -----------------------------
+@router.post("/top100/publish", summary="Publish & freeze Top 100 chart")
+def publish_top100():
+    from data.top100_store import lock_top100
 
-@router.post("/publish/{region}", summary="Publish & freeze a regional chart")
-def publish_region(region: str):
-    region = region.title()
-
-    if region not in VALID_REGIONS:
-        raise HTTPException(status_code=400, detail="Invalid region")
-
-    if _is_region_locked(region):
-        raise HTTPException(
-            status_code=409,
-            detail=f"{region} region already published & locked"
-        )
-
-    _lock_region(region)
-    _audit("publish_region", region)
+    lock_top100()
+    _audit("publish_top100", "global")
 
     return {
         "status": "published",
-        "region": region,
+        "chart": "top100",
         "locked": True
     }
 
 
-@router.post("/unpublish/{region}", summary="Unfreeze a regional chart (admin only)")
-def unpublish_region(region: str):
-    region = region.title()
+@router.post("/top100/unpublish", summary="Unfreeze Top 100 chart")
+def unpublish_top100():
+    from data.top100_store import unlock_top100
 
-    if region not in VALID_REGIONS:
-        raise HTTPException(status_code=400, detail="Invalid region")
-
-    if not _is_region_locked(region):
-        raise HTTPException(
-            status_code=409,
-            detail=f"{region} region is not locked"
-        )
-
-    _unlock_region(region)
-    _audit("unpublish_region", region)
+    unlock_top100()
+    _audit("unpublish_top100", "global")
 
     return {
         "status": "unlocked",
-        "region": region,
+        "chart": "top100",
         "locked": False
     }
