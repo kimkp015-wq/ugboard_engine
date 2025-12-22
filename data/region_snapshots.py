@@ -19,3 +19,4 @@ def load_region_snapshots():
         return json.loads(SNAPSHOT_FILE.read_text())
     except Exception:
         return DEFAULT.copy()
+        
