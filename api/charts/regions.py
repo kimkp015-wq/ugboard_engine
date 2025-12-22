@@ -1,56 +1,39 @@
-from fastapi import APIRouter, HTTPException
-from data.store import load_items
-from data.region_store import is_region_locked
-from data.region_snapshots import load_region_snapshot
+# data/region_snapshots.py
 
-router = APIRouter()
+import json
+from pathlib import Path
+from datetime import datetime
 
-VALID_REGIONS = ["Eastern", "Northern", "Western"]
+SNAPSHOT_FILE = Path("data/region_snapshots.json")
 
 
-@router.get("/regions/{region}", summary="Get Top 5 songs per region")
-def get_region_chart(region: str):
-    region = region.title()
+def _load_all():
+    if not SNAPSHOT_FILE.exists():
+        return {}
+    try:
+        return json.loads(SNAPSHOT_FILE.read_text())
+    except Exception:
+        return {}
 
-    if region not in VALID_REGIONS:
-        raise HTTPException(status_code=400, detail="Invalid region")
 
-    # If region is published, serve snapshot (FROZEN)
-    if is_region_locked(region):
-        snapshot = load_region_snapshot(region)
-        if snapshot is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Region is locked but snapshot missing"
-            )
+def _save_all(data: dict):
+    SNAPSHOT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SNAPSHOT_FILE.write_text(json.dumps(data, indent=2))
 
-        return {
-            "status": "ok",
-            "region": region,
-            "locked": True,
-            "count": len(snapshot),
-            "items": snapshot
-        }
 
-    # Otherwise serve live calculation
-    items = load_items()
-
-    region_items = [
-        i for i in items
-        if i.get("region") == region
-    ]
-
-    region_items.sort(
-        key=lambda x: x.get("score", 0),
-        reverse=True
-    )
-
-    top5 = region_items[:5]
-
-    return {
-        "status": "ok",
+def save_region_snapshot(region: str, items: list):
+    data = _load_all()
+    data[region] = {
         "region": region,
-        "locked": False,
-        "count": len(top5),
-        "items": top5
+        "published_at": datetime.utcnow().isoformat(),
+        "items": items
     }
+    _save_all(data)
+
+
+def load_region_snapshot(region: str):
+    data = _load_all()
+    snapshot = data.get(region)
+    if not snapshot:
+        return None
+    return snapshot.get("items", [])

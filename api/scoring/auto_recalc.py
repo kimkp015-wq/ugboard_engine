@@ -1,6 +1,5 @@
 from data.region_store import is_region_locked
 from data.store import load_items, save_items
-from data.regions_live import save_regions_live
 
 def recalc_regions():
     items = load_items()
@@ -23,4 +22,3 @@ def recalc_regions():
             reverse=True
         )[:5]
 
-    save_regions_live(regions)
