@@ -3,8 +3,11 @@
 from fastapi import APIRouter, HTTPException
 from datetime import datetime
 
-from data.store import load_items
-from data.region_store import lock_region, unlock_region, is_region_locked
+from data.region_store import (
+    lock_region,
+    unlock_region,
+    is_region_locked
+)
 from data.audit import log_audit
 
 router = APIRouter()
@@ -12,33 +15,7 @@ router = APIRouter()
 VALID_REGIONS = ["Eastern", "Northern", "Western"]
 
 
-# =====================================================
-# TOP 100 PUBLISH (GLOBAL)
-# =====================================================
-
-@router.post("/publish/top100", summary="Publish & freeze Top 100 chart")
-def publish_top100():
-    """
-    Freezes Top 100 (logical flag only, no deletion).
-    """
-
-    log_audit({
-        "action": "publish_top100",
-        "timestamp": datetime.utcnow().isoformat()
-    })
-
-    return {
-        "status": "published",
-        "chart": "top100",
-        "locked": True
-    }
-
-
-# =====================================================
-# REGION PUBLISH / UNPUBLISH
-# =====================================================
-
-@router.post("/publish/{region}", summary="Publish & freeze a regional chart")
+@router.post("/publish/{region}")
 def publish_region(region: str):
     region = region.title()
 
@@ -48,7 +25,7 @@ def publish_region(region: str):
     if is_region_locked(region):
         raise HTTPException(
             status_code=409,
-            detail=f"{region} region already published & locked"
+            detail=f"{region} already published"
         )
 
     lock_region(region)
@@ -60,13 +37,13 @@ def publish_region(region: str):
     })
 
     return {
-        "status": "published",
+        "status": "ok",
         "region": region,
         "locked": True
     }
 
 
-@router.post("/unpublish/{region}", summary="Unfreeze a regional chart")
+@router.post("/unpublish/{region}")
 def unpublish_region(region: str):
     region = region.title()
 
@@ -76,7 +53,7 @@ def unpublish_region(region: str):
     if not is_region_locked(region):
         raise HTTPException(
             status_code=409,
-            detail=f"{region} region is not locked"
+            detail=f"{region} is not locked"
         )
 
     unlock_region(region)
@@ -88,7 +65,7 @@ def unpublish_region(region: str):
     })
 
     return {
-        "status": "unlocked",
+        "status": "ok",
         "region": region,
         "locked": False
     }
