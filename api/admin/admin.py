@@ -1,100 +1,130 @@
+# api/admin/admin.py
+
 from fastapi import APIRouter, HTTPException, BackgroundTasks
-from datetime import datetime
 from typing import Dict
 
 from data.store import load_items, save_items
 from data.admin_injection_log import (
     can_inject_today,
+    remaining_injections_today,
     log_admin_injection
 )
 from api.scoring.auto_recalc import safe_auto_recalculate, mark_ingestion
 
 router = APIRouter()
 
-# Single source of truth
-VALID_REGIONS = {"eastern", "northern", "western", "central"}
+# -----------------------------
+# Allowed regions (STRICT)
+# -----------------------------
+ALLOWED_REGIONS = {
+    "eastern",
+    "northern",
+    "western"
+}
 
 
-@router.post("/admin/inject")
+# -----------------------------
+# Admin inject song
+# -----------------------------
+@router.post("/inject")
 def admin_inject_song(
     payload: Dict,
     background_tasks: BackgroundTasks
 ):
+    """
+    Admin-only song injection.
+    HARD LIMIT: 10/day (EAT)
+    """
+
     title = payload.get("title")
     artist = payload.get("artist")
     region = payload.get("region")
 
-    if not title or not artist:
+    # -----------------------------
+    # Basic validation
+    # -----------------------------
+    if not title or not artist or not region:
         raise HTTPException(
             status_code=400,
-            detail="title and artist are required"
+            detail="title, artist, and region are required"
         )
 
-    # Enforce daily admin injection limit
+    region = region.lower().strip()
+
+    if region not in ALLOWED_REGIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid region. Allowed: {sorted(ALLOWED_REGIONS)}"
+        )
+
+    # -----------------------------
+    # Enforce DAILY LIMIT
+    # -----------------------------
     if not can_inject_today():
         raise HTTPException(
             status_code=403,
-            detail="Daily admin injection limit reached (10/day)"
+            detail={
+                "error": "Daily admin injection limit reached",
+                "limit": 10,
+                "remaining": 0
+            }
         )
 
-    # Normalize & validate region (optional)
-    if region is not None:
-        if not isinstance(region, str):
-            raise HTTPException(
-                status_code=400,
-                detail="region must be a string"
-            )
-
-        region = region.strip().lower()
-
-        if region not in VALID_REGIONS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid region. Must be one of {sorted(VALID_REGIONS)}"
-            )
-
+    # -----------------------------
+    # Load existing items
+    # -----------------------------
     items = load_items()
 
-    # Prevent duplicates
-    existing = next(
+    # -----------------------------
+    # Find or create song
+    # -----------------------------
+    song = next(
         (i for i in items if i["title"] == title and i["artist"] == artist),
         None
     )
 
-    if existing:
-        raise HTTPException(
-            status_code=409,
-            detail="Song already exists"
-        )
+    if not song:
+        song = {
+            "title": title,
+            "artist": artist,
+            "youtube": 0,
+            "radio": 0,
+            "tv": 0,
+            "score": 0
+        }
+        items.append(song)
 
-    song = {
-        "title": title,
-        "artist": artist,
-        "youtube": 0,
-        "radio": 0,
-        "tv": 0,
-        "score": 0,
-        "region": region,
-        "injected_by_admin": True,
-        "created_at": datetime.utcnow().isoformat()
-    }
+    # -----------------------------
+    # Assign region (ADMIN OVERRIDE)
+    # -----------------------------
+    song["region"] = region
 
-    items.append(song)
+    # -----------------------------
+    # Persist items
+    # -----------------------------
     save_items(items)
 
-    # Log admin injection
+    # -----------------------------
+    # Audit log (DATA LAYER)
+    # -----------------------------
     log_admin_injection(
         title=title,
         artist=artist,
         region=region
     )
 
-    # Trigger safe recalculation
+    # -----------------------------
+    # Trigger SAFE AUTO-RECALC
+    # -----------------------------
     mark_ingestion()
     background_tasks.add_task(safe_auto_recalculate)
 
+    # -----------------------------
+    # Success response
+    # -----------------------------
     return {
         "status": "ok",
         "message": "Song injected successfully",
-        "region": region
+        "region": region,
+        "remaining_today": remaining_injections_today()
     }
