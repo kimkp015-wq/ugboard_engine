@@ -1,39 +1,46 @@
-from fastapi import APIRouter, HTTPException
+# api/charts/regions.py
+
+from fastapi import APIRouter
 from data.store import load_items
 from data.region_store import is_region_locked
 
 router = APIRouter()
 
-VALID_REGIONS = {"Eastern", "Northern", "Western"}
+VALID_REGIONS = ["Eastern", "Western", "Northern"]
+
 
 @router.get("/regions/{region}")
 def get_region_chart(region: str):
-    if region not in VALID_REGIONS:
-        raise HTTPException(status_code=400, detail="Invalid region")
+    """
+    Returns Top 5 songs for a given region.
+    READ-ONLY.
+    """
 
-    if is_region_locked(region):
+    if region not in VALID_REGIONS:
         return {
             "region": region,
-            "locked": True,
-            "items": []
+            "locked": False,
+            "chart": []
         }
 
     items = load_items()
 
-    region_items = [
-        i for i in items
-        if i.get("region") == region
+    # Filter by region
+    regional_songs = [
+        song for song in items
+        if song.get("region") == region
     ]
 
-    region_items = sorted(
-        region_items,
+    # Sort by score DESC
+    regional_songs.sort(
         key=lambda x: x.get("score", 0),
         reverse=True
-    )[:5]
+    )
+
+    top_5 = regional_songs[:5]
 
     return {
         "region": region,
-        "locked": False,
-        "count": len(region_items),
-        "items": region_items
+        "locked": is_region_locked(region),
+        "chart": top_5
     }
