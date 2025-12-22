@@ -1,39 +1,75 @@
-from fastapi import APIRouter, HTTPException
-from data.admin_injection_log import can_inject_today, log_injection
-from pathlib import Path
-import json
+# api/admin/admin.py
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException
+from typing import Dict
+
+from data.store import load_items, save_items
+from data.admin_injection_log import can_inject_today, record_injection
+from api.scoring.auto_recalc import safe_auto_recalculate, mark_ingestion
 
 router = APIRouter()
 
-ITEMS_FILE = Path("data/items.json")
-
 
 @router.post("/inject")
-def admin_inject(song_id: str, region: str, admin: str = "system"):
+def admin_inject_song(
+    payload: Dict,
+    background_tasks: BackgroundTasks
+):
+    """
+    Admin manual injection.
+    Enforces 10/day limit.
+    Triggers safe Top 100 recalculation.
+    """
+
     if not can_inject_today():
         raise HTTPException(
-            status_code=403,
+            status_code=429,
             detail="Daily admin injection limit (10/day) reached"
         )
 
-    if not ITEMS_FILE.exists():
-        raise HTTPException(status_code=500, detail="Items store missing")
+    title = payload.get("title")
+    artist = payload.get("artist")
+    region = payload.get("region")
 
-    items = json.loads(ITEMS_FILE.read_text())
+    if not title or not artist:
+        raise HTTPException(
+            status_code=400,
+            detail="title and artist are required"
+        )
 
-    if song_id not in items:
-        raise HTTPException(status_code=404, detail="Song not found")
+    items = load_items()
 
-    # Assign region (metadata only)
-    items[song_id]["region"] = region.lower()
-    items[song_id]["admin_injected"] = True
+    song = next(
+        (i for i in items if i["title"] == title and i["artist"] == artist),
+        None
+    )
 
-    ITEMS_FILE.write_text(json.dumps(items, indent=2))
+    if not song:
+        song = {
+            "title": title,
+            "artist": artist,
+            "youtube": 0,
+            "radio": 0,
+            "tv": 0,
+            "score": 0,
+            "region": region,
+            "admin_injected": True
+        }
+        items.append(song)
+    else:
+        if region:
+            song["region"] = region
+        song["admin_injected"] = True
 
-    log_injection(song_id, region, admin)
+    save_items(items)
+
+    record_injection()
+    mark_ingestion()
+    background_tasks.add_task(safe_auto_recalculate)
 
     return {
         "status": "ok",
-        "song_id": song_id,
-        "region": region.lower()
+        "message": "Admin injection successful",
+        "title": title,
+        "artist": artist
     }
