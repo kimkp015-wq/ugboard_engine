@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 from api.admin.status import router as status_router
 from api.admin.internal import router as internal_router
+from api.admin.health import router as health_router
+
+app.include_router(health_router)
 from api.admin.publish import router as publish_router
 # from api.admin.regions_publish import router as regions_publish_router
 # app.include_router(regions_publish_router, prefix="/admin", tags=["Admin"])
