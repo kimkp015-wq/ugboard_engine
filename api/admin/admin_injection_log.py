@@ -8,7 +8,7 @@ EAT = ZoneInfo("Africa/Kampala")
 DAILY_LIMIT = 10
 
 
-def _load_log() -> dict:
+def _load():
     if not LOG_FILE.exists():
         return {}
     try:
@@ -17,18 +17,17 @@ def _load_log() -> dict:
         return {}
 
 
-def _save_log(data: dict):
+def _save(data: dict):
     LOG_FILE.write_text(json.dumps(data, indent=2))
 
 
-def _today_key() -> str:
+def _today():
     return datetime.now(EAT).date().isoformat()
 
 
 def injections_today() -> int:
-    log = _load_log()
-    today = _today_key()
-    return int(log.get(today, {}).get("count", 0))
+    data = _load()
+    return int(data.get(_today(), {}).get("count", 0))
 
 
 def can_inject_today() -> bool:
@@ -36,24 +35,18 @@ def can_inject_today() -> bool:
 
 
 def record_injection(song: dict):
-    """
-    Records a successful admin injection.
-    """
-    log = _load_log()
-    today = _today_key()
+    data = _load()
+    today = _today()
 
-    if today not in log:
-        log[today] = {
-            "count": 0,
-            "items": []
-        }
+    if today not in data:
+        data[today] = {"count": 0, "items": []}
 
-    log[today]["count"] += 1
-    log[today]["items"].append({
+    data[today]["count"] += 1
+    data[today]["items"].append({
         "title": song.get("title"),
         "artist": song.get("artist"),
         "region": song.get("region"),
-        "timestamp": datetime.now(EAT).isoformat()
+        "time": datetime.now(EAT).isoformat()
     })
 
-    _save_log(log)
+    _save(data)
