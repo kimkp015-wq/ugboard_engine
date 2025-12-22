@@ -1,5 +1,14 @@
 # api/charts/regions.py
 
+def load_region_locks():
+    path = "data/region_locks.json"
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 from fastapi import APIRouter
 from data.store import load_items
 import json
@@ -69,5 +78,6 @@ def get_regions():
 
     return {
         "status": "ok",
-        "regions": response
+        "regions": locks = load_region_locks()
+response = {}
     }
