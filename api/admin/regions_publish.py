@@ -6,12 +6,18 @@ from data.region_snapshots import save_region_snapshot
 
 router = APIRouter()
 
+VALID_REGIONS = ["Eastern", "Northern", "Western"]
+
 
 @router.post("/regions/{region}/publish")
 def publish_region_chart(region: str):
-    """
-    Publish & freeze weekly Top 5 for a region
-    """
+    region = region.title()
+
+    if region not in VALID_REGIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid region"
+        )
 
     if is_region_locked(region):
         raise HTTPException(
@@ -44,5 +50,6 @@ def publish_region_chart(region: str):
     return {
         "status": "ok",
         "region": region,
+        "published": True,
         "count": len(top5)
     }
