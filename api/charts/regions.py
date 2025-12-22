@@ -1,62 +1,75 @@
 # api/charts/regions.py
 
 from fastapi import APIRouter
-import json
-import os
 from data.store import load_items
 
 router = APIRouter()
 
-REGIONS = ["Eastern", "Northern", "Western"]
+SUPPORTED_REGIONS = {
+    "eastern": "Eastern Region",
+    "northern": "Northern Region",
+    "western": "Western Region",
+}
 
 
-def load_region_locks():
-    path = "data/region_locks.json"
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+def normalize_region(value: str | None) -> str | None:
+    if not value:
+        return None
+    return value.strip().lower()
 
 
 @router.get("/regions")
-def get_regions():
+def get_all_regions():
+    """
+    Returns Top 5 songs per region.
+    Safe, read-only, never crashes.
+    """
+
     items = load_items()
-    locks = load_region_locks()
+
+    # Prepare buckets
+    region_buckets = {key: [] for key in SUPPORTED_REGIONS}
+
+    for item in items:
+        region = normalize_region(item.get("region"))
+
+        if region in region_buckets:
+            region_buckets[region].append(item)
 
     response = {}
 
-    for region in REGIONS:
-        # 🔒 If region is locked → frozen output
-        if locks.get(region) is True:
-            response[region] = {
-                "locked": True,
-                "count": 0,
-                "items": []
-            }
-            continue
+    for key, label in SUPPORTED_REGIONS.items():
+        songs = region_buckets[key]
 
-        # 🧠 Region logic (ADMIN + future tagging will improve this)
-        region_items = [
-            i for i in items
-            if i.get("region") == region
-        ]
-
-        region_items = sorted(
-            region_items,
-            key=lambda x: x.get("score", 0),
-            reverse=True
+        # Sort by score DESC, admin-injected always included
+        songs = sorted(
+            songs,
+            key=lambda x: (
+                not x.get("admin_injected", False),
+                -float(x.get("score", 0)),
+            ),
         )
 
-        response[region] = {
-            "locked": False,
-            "count": min(5, len(region_items)),
-            "items": region_items[:5]
+        top_five = []
+
+        for index, song in enumerate(songs[:5], start=1):
+            top_five.append(
+                {
+                    "position": index,
+                    "title": song.get("title"),
+                    "artist": song.get("artist"),
+                    "score": song.get("score", 0),
+                    "admin_injected": song.get("admin_injected", False),
+                }
+            )
+
+        response[key] = {
+            "region": label,
+            "count": len(top_five),
+            "items": top_five,
         }
 
     return {
         "status": "ok",
-        "regions": response
+        "regions": response,
     }
