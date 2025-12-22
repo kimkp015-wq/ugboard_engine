@@ -1,24 +1,18 @@
-# api/charts/regions.py
+from data.store import load_items
 
-from fastapi import APIRouter
-from data.region_snapshots import load_region_snapshots
+REGIONS = ["Eastern", "Northern", "Western"]
 
-router = APIRouter()
+def build_region_chart(region: str):
+    items = load_items()
 
+    region_items = [
+        i for i in items
+        if i.get("region") == region
+    ]
 
-@router.get("/regions")
-def get_region_charts():
-    """
-    Read-only region charts.
-    Data is served from region snapshots.
-    """
-    charts = load_region_snapshots()
+    region_items.sort(
+        key=lambda x: x.get("score", 0),
+        reverse=True
+    )
 
-    return {
-        "status": "ok",
-        "regions": {
-            "Eastern": charts.get("Eastern", [])[:5],
-            "Northern": charts.get("Northern", [])[:5],
-            "Western": charts.get("Western", [])[:5],
-        }
-    }
+    return region_items[:5]
