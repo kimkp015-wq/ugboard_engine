@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from api.admin.status import router as status_router
 from api.admin.internal import router as internal_router
 from api.admin.publish import router as publish_router
 # from api.admin.regions_publish import router as regions_publish_router
@@ -58,6 +59,7 @@ app.include_router(tv_router, prefix="/ingest", tags=["Ingestion"])
 
 # Admin
 app.include_router(internal_router, prefix="/admin", tags=["Admin"])
+app.include_router(status_router, prefix="/admin", tags=["Admin"])
 app.include_router(admin_router, prefix="/admin", tags=["Admin"])
 app.include_router(publish_router, prefix="/admin", tags=["Admin"])
 app.include_router(publish_router, prefix="/admin", tags=["Admin"])
