@@ -42,3 +42,14 @@ def unpublish_top100():
         "chart": "top100",
         "locked": False
     }
+    @router.post("/publish/top100", summary="No-op publish for Top 100")
+def publish_top100():
+    """
+    Top 100 is auto-managed by the engine.
+    This endpoint exists only to prevent 500 errors
+    if called by UI or automation.
+    """
+    return {
+        "status": "ok",
+        "message": "Top 100 is auto-published and does not require manual publishing"
+    }
