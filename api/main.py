@@ -1,5 +1,6 @@
 from fastapi import FastAPI
-
+# from api.admin.regions_publish import router as regions_publish_router
+# app.include_router(regions_publish_router, prefix="/admin", tags=["Admin"])
 # =========================
 # Create app FIRST
 # =========================
