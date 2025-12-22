@@ -1,8 +1,38 @@
+from fastapi import APIRouter, HTTPException
 from data.store import load_items
+from data.region_store import is_region_locked
+from data.region_snapshots import load_region_snapshot
 
-REGIONS = ["Eastern", "Northern", "Western"]
+router = APIRouter()
 
-def build_region_chart(region: str):
+VALID_REGIONS = ["Eastern", "Northern", "Western"]
+
+
+@router.get("/regions/{region}", summary="Get Top 5 chart for a region")
+def get_region_chart(region: str):
+    region = region.title()
+
+    if region not in VALID_REGIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid region"
+        )
+
+    # If region is locked, serve snapshot (published chart)
+    if is_region_locked(region):
+        snapshot = load_region_snapshot(region)
+        if not snapshot:
+            raise HTTPException(
+                status_code=404,
+                detail="Region chart not published yet"
+            )
+        return {
+            "region": region,
+            "locked": True,
+            "chart": snapshot
+        }
+
+    # Live (unpublished) region chart
     items = load_items()
 
     region_items = [
@@ -15,4 +45,8 @@ def build_region_chart(region: str):
         reverse=True
     )
 
-    return region_items[:5]
+    return {
+        "region": region,
+        "locked": False,
+        "chart": region_items[:5]
+    }
