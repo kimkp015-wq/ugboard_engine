@@ -1,130 +1,39 @@
-# api/admin/admin.py
-
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from typing import Dict
-
-from data.store import load_items, save_items
-from data.admin_injection_log import (
-    can_inject_today,
-    remaining_injections_today,
-    log_admin_injection
-)
-from api.scoring.auto_recalc import safe_auto_recalculate, mark_ingestion
+from fastapi import APIRouter, HTTPException
+from data.admin_injection_log import can_inject_today, log_injection
+from pathlib import Path
+import json
 
 router = APIRouter()
 
-# -----------------------------
-# Allowed regions (STRICT)
-# -----------------------------
-ALLOWED_REGIONS = {
-    "eastern",
-    "northern",
-    "western"
-}
+ITEMS_FILE = Path("data/items.json")
 
 
-# -----------------------------
-# Admin inject song
-# -----------------------------
 @router.post("/inject")
-def admin_inject_song(
-    payload: Dict,
-    background_tasks: BackgroundTasks
-):
-    """
-    Admin-only song injection.
-    HARD LIMIT: 10/day (EAT)
-    """
-
-    title = payload.get("title")
-    artist = payload.get("artist")
-    region = payload.get("region")
-
-    # -----------------------------
-    # Basic validation
-    # -----------------------------
-    if not title or not artist or not region:
-        raise HTTPException(
-            status_code=400,
-            detail="title, artist, and region are required"
-        )
-
-    region = region.lower().strip()
-
-    if region not in ALLOWED_REGIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid region. Allowed: {sorted(ALLOWED_REGIONS)}"
-        )
-
-    # -----------------------------
-    # Enforce DAILY LIMIT
-    # -----------------------------
+def admin_inject(song_id: str, region: str, admin: str = "system"):
     if not can_inject_today():
         raise HTTPException(
             status_code=403,
-            detail={
-                "error": "Daily admin injection limit reached",
-                "limit": 10,
-                "remaining": 0
-            }
+            detail="Daily admin injection limit (10/day) reached"
         )
 
-    # -----------------------------
-    # Load existing items
-    # -----------------------------
-    items = load_items()
+    if not ITEMS_FILE.exists():
+        raise HTTPException(status_code=500, detail="Items store missing")
 
-    # -----------------------------
-    # Find or create song
-    # -----------------------------
-    song = next(
-        (i for i in items if i["title"] == title and i["artist"] == artist),
-        None
-    )
+    items = json.loads(ITEMS_FILE.read_text())
 
-    if not song:
-        song = {
-            "title": title,
-            "artist": artist,
-            "youtube": 0,
-            "radio": 0,
-            "tv": 0,
-            "score": 0
-        }
-        items.append(song)
+    if song_id not in items:
+        raise HTTPException(status_code=404, detail="Song not found")
 
-    # -----------------------------
-    # Assign region (ADMIN OVERRIDE)
-    # -----------------------------
-    song["region"] = region
+    # Assign region (metadata only)
+    items[song_id]["region"] = region.lower()
+    items[song_id]["admin_injected"] = True
 
-    # -----------------------------
-    # Persist items
-    # -----------------------------
-    save_items(items)
+    ITEMS_FILE.write_text(json.dumps(items, indent=2))
 
-    # -----------------------------
-    # Audit log (DATA LAYER)
-    # -----------------------------
-    log_admin_injection(
-        title=title,
-        artist=artist,
-        region=region
-    )
+    log_injection(song_id, region, admin)
 
-    # -----------------------------
-    # Trigger SAFE AUTO-RECALC
-    # -----------------------------
-    mark_ingestion()
-    background_tasks.add_task(safe_auto_recalculate)
-
-    # -----------------------------
-    # Success response
-    # -----------------------------
     return {
         "status": "ok",
-        "message": "Song injected successfully",
-        "region": region,
-        "remaining_today": remaining_injections_today()
+        "song_id": song_id,
+        "region": region.lower()
     }
