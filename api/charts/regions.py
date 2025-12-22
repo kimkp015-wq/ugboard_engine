@@ -8,31 +8,31 @@ router = APIRouter()
 VALID_REGIONS = ["Eastern", "Northern", "Western"]
 
 
-@router.get("/regions/{region}", summary="Get Top 5 chart for a region")
+@router.get("/regions/{region}", summary="Get Top 5 songs per region")
 def get_region_chart(region: str):
     region = region.title()
 
     if region not in VALID_REGIONS:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid region"
-        )
+        raise HTTPException(status_code=400, detail="Invalid region")
 
-    # If region is locked, serve snapshot (published chart)
+    # If region is published, serve snapshot (FROZEN)
     if is_region_locked(region):
         snapshot = load_region_snapshot(region)
-        if not snapshot:
+        if snapshot is None:
             raise HTTPException(
-                status_code=404,
-                detail="Region chart not published yet"
+                status_code=500,
+                detail="Region is locked but snapshot missing"
             )
+
         return {
+            "status": "ok",
             "region": region,
             "locked": True,
-            "chart": snapshot
+            "count": len(snapshot),
+            "items": snapshot
         }
 
-    # Live (unpublished) region chart
+    # Otherwise serve live calculation
     items = load_items()
 
     region_items = [
@@ -45,8 +45,12 @@ def get_region_chart(region: str):
         reverse=True
     )
 
+    top5 = region_items[:5]
+
     return {
+        "status": "ok",
         "region": region,
         "locked": False,
-        "chart": region_items[:5]
+        "count": len(top5),
+        "items": top5
     }
