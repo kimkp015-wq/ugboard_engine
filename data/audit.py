@@ -1,43 +1,33 @@
 # data/audit.py
 
 import json
-import time
-import os
+from pathlib import Path
+from datetime import datetime
 
-LOG_PATH = "data/audit_log.jsonl"
-MAX_LINES = 5000
+AUDIT_FILE = Path("data/audit_log.json")
 
 
-def _rotate_if_needed():
-    if not os.path.exists(LOG_PATH):
-        return
+def log_audit(entry: dict):
+    """
+    Append an audit event to audit_log.json.
+    Never crashes the engine.
+    """
+
+    entry["logged_at"] = datetime.utcnow().isoformat()
 
     try:
-        with open(LOG_PATH, "r") as f:
-            lines = f.readlines()
+        if AUDIT_FILE.exists():
+            data = json.loads(AUDIT_FILE.read_text())
+            if not isinstance(data, list):
+                data = []
+        else:
+            data = []
 
-        if len(lines) > MAX_LINES:
-            with open(LOG_PATH, "w") as f:
-                f.writelines(lines[-MAX_LINES:])
-    except Exception:
-        pass
+        data.append(entry)
 
-
-def log_event(event_type: str, data: dict | None = None):
-    try:
-        os.makedirs("data", exist_ok=True)
-
-        event = {
-            "ts": int(time.time()),
-            "type": event_type,
-            **(data or {})
-        }
-
-        with open(LOG_PATH, "a") as f:
-            f.write(json.dumps(event) + "\n")
-
-        _rotate_if_needed()
+        AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        AUDIT_FILE.write_text(json.dumps(data, indent=2))
 
     except Exception:
-        # Logging must NEVER crash the app
+        # ABSOLUTE SAFETY: audit must NEVER crash engine
         pass
