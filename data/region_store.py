@@ -1,36 +1,49 @@
+import json
 from pathlib import Path
 from datetime import datetime
-from zoneinfo import ZoneInfo
-import json
 
-STORE = Path("data/regions.json")
-EAT = ZoneInfo("Africa/Kampala")
+REGION_LOCKS_FILE = Path("data/region_locks.json")
 
-
-def _load():
-    if not STORE.exists():
-        return {}
-    return json.loads(STORE.read_text())
+DEFAULT_LOCKS = {
+    "Eastern": False,
+    "Northern": False,
+    "Western": False,
+    "last_updated": None
+}
 
 
-def _save(data):
-    STORE.write_text(json.dumps(data, indent=2))
+def load_region_locks():
+    if not REGION_LOCKS_FILE.exists():
+        save_region_locks(DEFAULT_LOCKS)
+        return DEFAULT_LOCKS.copy()
+
+    try:
+        return json.loads(REGION_LOCKS_FILE.read_text())
+    except Exception:
+        return DEFAULT_LOCKS.copy()
 
 
-def is_frozen(region: str, week: str) -> bool:
-    data = _load()
-    return region in data and data[region]["week"] == week
+def save_region_locks(data: dict):
+    REGION_LOCKS_FILE.write_text(json.dumps(data, indent=2))
 
 
-def publish_region(region: str, items: list, week: str):
-    data = _load()
-    data[region] = {
-        "week": week,
-        "published_at": datetime.now(EAT).isoformat(),
-        "items": items
-    }
-    _save(data)
+def is_region_locked(region: str) -> bool:
+    """
+    Returns True if region is locked (published/frozen)
+    """
+    locks = load_region_locks()
+    return bool(locks.get(region, False))
 
 
-def get_region(region: str):
-    return _load().get(region)
+def lock_region(region: str):
+    locks = load_region_locks()
+    locks[region] = True
+    locks["last_updated"] = datetime.utcnow().isoformat()
+    save_region_locks(locks)
+
+
+def unlock_region(region: str):
+    locks = load_region_locks()
+    locks[region] = False
+    locks["last_updated"] = datetime.utcnow().isoformat()
+    save_region_locks(locks)
