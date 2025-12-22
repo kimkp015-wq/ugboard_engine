@@ -1,4 +1,7 @@
 from fastapi import APIRouter, HTTPException
+from data.region_store import publish_region
+except ImportError:
+    publish_region = None
 from data.store import load_items
 from data.region_store import lock_region, is_region_locked
 from data.region_snapshots import save_region_snapshot
