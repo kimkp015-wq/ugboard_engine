@@ -29,23 +29,23 @@ def root():
 
 # =========================
 # Import routers AFTER app exists
-# (prevents crashes & circular imports)
+# (prevents circular imports)
 # =========================
 
 # Health
 from api.admin.health import router as health_router
 
-# Admin (READ-ONLY + WRITE + INTERNAL)
+# Admin (READ + WRITE + INTERNAL)
 from api.admin.alerts import router as alerts_router
-from api.admin.internal import router as internal_router
 from api.admin.publish import router as publish_router
+from api.admin.internal import router as internal_router
 
 # Charts (READ-ONLY)
 from api.charts.top100 import router as top100_router
 from api.charts.trending import router as trending_router
 from api.charts.regions import router as regions_router
 
-# Ingestion (INPUTS / WRITE)
+# Ingestion (WRITE / INPUT)
 from api.ingestion.youtube import router as youtube_router
 from api.ingestion.radio import router as radio_router
 from api.ingestion.tv import router as tv_router
