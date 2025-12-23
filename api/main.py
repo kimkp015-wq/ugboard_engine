@@ -62,3 +62,20 @@ app.include_router(tv_router, prefix="/ingest", tags=["Ingestion"])
 app.include_router(internal_router, prefix="/admin", tags=["Admin"])
 app.include_router(publish_router, prefix="/admin", tags=["Admin"])
 app.include_router(alerts_router, prefix="/admin", tags=["Admin"])
+    from fastapi import FastAPI
+
+app = FastAPI(
+    title="UG Board Engine",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+@app.get("/", tags=["Health"])
+def root():
+    return {
+        "engine": "UG Board Engine",
+        "status": "online",
+        "environment": "production",
+        "docs": "/docs",
+        "redoc": "/redoc"
+    }
