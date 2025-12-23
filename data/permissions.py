@@ -1,20 +1,21 @@
 import os
-from fastapi import Header, HTTPException
+from fastapi import HTTPException, Security
+from fastapi.security import APIKeyHeader
+from data.region_store import any_region_locked
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 INJECT_TOKEN = os.getenv("INJECT_TOKEN")
 
+api_key_header = APIKeyHeader(
+    name="Authorization",
+    auto_error=False
+)
+
 
 def ensure_admin_allowed(
-    authorization: str | None = Header(default=None),
+    api_key: str | None = Security(api_key_header),
 ):
-    if not ADMIN_TOKEN:
-        raise HTTPException(
-            status_code=500,
-            detail="ADMIN_TOKEN not configured",
-        )
-
-    if authorization != ADMIN_TOKEN:
+    if not ADMIN_TOKEN or api_key != ADMIN_TOKEN:
         raise HTTPException(
             status_code=403,
             detail="Admin access denied",
@@ -22,17 +23,16 @@ def ensure_admin_allowed(
 
 
 def ensure_injection_allowed(
-    authorization: str | None = Header(default=None),
+    api_key: str | None = Security(api_key_header),
 ):
-    if not INJECT_TOKEN:
+    if any_region_locked():
         raise HTTPException(
-            status_code=500,
-            detail="INJECT_TOKEN not configured",
+            status_code=423,
+            detail="Injection disabled after publish",
         )
 
-    if authorization != INJECT_TOKEN:
+    if not INJECT_TOKEN or api_key != INJECT_TOKEN:
         raise HTTPException(
             status_code=403,
             detail="Injection access denied",
         )
- 
