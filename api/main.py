@@ -39,6 +39,7 @@ from api.admin.health import router as health_router
 from api.admin.alerts import router as alerts_router
 from api.admin.publish import router as publish_router
 from api.admin.internal import router as internal_router
+from api.admin.weekly import router as weekly_router   # ✅ ADDED
 
 # Charts (READ-ONLY)
 from api.charts.top100 import router as top100_router
@@ -107,6 +108,12 @@ app.include_router(
 
 app.include_router(
     publish_router,
+    prefix="/admin",
+    tags=["Admin"],
+)
+
+app.include_router(
+    weekly_router,          # ✅ ADDED
     prefix="/admin",
     tags=["Admin"],
 )
