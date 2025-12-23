@@ -35,7 +35,7 @@ def root():
 # Health
 from api.admin.health import router as health_router
 
-# Admin (human-triggered)
+# Admin (MANUAL / HUMAN-triggered)
 from api.admin.alerts import router as alerts_router
 from api.admin.publish import router as publish_router
 
