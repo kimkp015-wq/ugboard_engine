@@ -1,3 +1,5 @@
+# api/admin/weekly.py
+
 from fastapi import APIRouter, Depends
 
 from data.permissions import ensure_internal_allowed
@@ -10,28 +12,44 @@ router = APIRouter()
 
 @router.post(
     "/weekly-run",
-    summary="(Internal) Weekly publish + rotate chart week",
+    summary="(Internal) Weekly publish and rotate chart week",
 )
 def run_weekly(
     _: None = Depends(ensure_internal_allowed),
 ):
-    # 1️⃣ Lock all regions
-    lock_region("Eastern")
-    lock_region("Northern")
-    lock_region("Western")
+    """
+    Internal-only endpoint.
 
-    # 2️⃣ Close current tracking week (if any)
+    Designed to be called by:
+    - Cloudflare Workers cron
+    - Trusted internal scheduler
+
+    Safe guarantees:
+    - Idempotent region locking
+    - Safe week rotation
+    - Auditable via index.json
+    """
+
+    # 1️⃣ Lock all regions (idempotent)
+    published_regions = []
+    for region in ("Eastern", "Northern", "Western"):
+        lock_region(region)
+        published_regions.append(region)
+
+    # 2️⃣ Close current tracking week (safe if already closed)
     close_tracking_week()
 
-    # 3️⃣ Open new tracking week
+    # 3️⃣ Open a new tracking week
     week = open_new_tracking_week()
 
-    # 4️⃣ Record scheduler run
-    record_scheduler_run()
+    # 4️⃣ Record scheduler run (Cloudflare cron)
+    scheduler_state = record_scheduler_run(
+        trigger="cloudflare_worker"
+    )
 
     return {
         "status": "ok",
-        "published_regions": ["Eastern", "Northern", "Western"],
+        "published_regions": published_regions,
         "week": week,
-        "trigger": "internal_scheduler",
+        "scheduler": scheduler_state,
     }
