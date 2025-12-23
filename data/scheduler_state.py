@@ -7,25 +7,47 @@ from zoneinfo import ZoneInfo
 from typing import Dict
 
 EAT = ZoneInfo("Africa/Kampala")
+
 STATE_FILE = Path("data/scheduler_state.json")
+INDEX_FILE = Path("data/index.json")
 
 
+# -------------------------
+# Helpers
+# -------------------------
 def _now() -> str:
     return datetime.now(EAT).isoformat()
 
 
+def _load_json(path: Path) -> Dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {}
+
+
+def _save_json(path: Path, data: Dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2))
+
+
+def _update_index(update: Dict) -> None:
+    index = _load_json(INDEX_FILE)
+    index.update(update)
+    _save_json(INDEX_FILE, index)
+
+
+# -------------------------
+# Scheduler state
+# -------------------------
 def _load_state() -> Dict:
     """
     Load scheduler state from disk.
     Safe: never raises.
     """
-    if not STATE_FILE.exists():
-        return {}
-
-    try:
-        return json.loads(STATE_FILE.read_text())
-    except Exception:
-        return {}
+    return _load_json(STATE_FILE)
 
 
 def record_scheduler_run(trigger: str = "unknown") -> Dict:
@@ -37,14 +59,21 @@ def record_scheduler_run(trigger: str = "unknown") -> Dict:
     - cloudflare_worker
     - admin_manual
     """
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-
     state = {
         "last_run_at": _now(),
         "trigger": trigger,
     }
 
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    _save_json(STATE_FILE, state)
+
+    # Sync to index for observability
+    _update_index(
+        {
+            "last_scheduler_run_at": state["last_run_at"],
+            "last_scheduler_trigger": state["trigger"],
+        }
+    )
+
     return state
 
 
