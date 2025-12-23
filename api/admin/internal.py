@@ -1,38 +1,43 @@
-from fastapi import APIRouter, Depends, HTTPException, Header
-from typing import Optional
+# api/admin/internal.py
 
+from fastapi import APIRouter, Depends, HTTPException, Header, Request
+from datetime import datetime
 from api.admin.weekly_scheduler import run_weekly_scheduler
 from data.chart_week import is_tracking_open
+from data.audit import log_audit
+import os
 
 router = APIRouter()
 
+INTERNAL_TOKEN = os.getenv("X_INTERNAL_TOKEN")
 
-# =========================
-# Internal call protection
-# =========================
+
 def verify_internal_call(
-    x_internal_token: Optional[str] = Header(default=None),
+    request: Request,
+    x_internal_token: str | None = Header(default=None),
 ):
     """
-    Prevent public access.
-
-    This token MUST be injected via:
-    - Cloudflare Scheduler
-    - Railway cron
+    Verify internal scheduler / automation calls.
+    Logs failed attempts for security visibility.
     """
-    if not x_internal_token:
+
+    if not x_internal_token or x_internal_token != INTERNAL_TOKEN:
+        log_audit(
+            action="internal_auth_failed",
+            path=str(request.url.path),
+            ip=request.client.host if request.client else "unknown",
+            timestamp=datetime.utcnow().isoformat(),
+        )
+
         raise HTTPException(
             status_code=401,
-            detail="Missing internal token",
+            detail="Unauthorized internal request",
         )
 
 
-# =========================
-# Weekly automation runner
-# =========================
 @router.post(
     "/internal/weekly-run",
-    summary="Run weekly publish / unlock automation (EAT)",
+    summary="Run weekly region publish/unlock automation (EAT)",
     tags=["Internal"],
 )
 def run_weekly(
@@ -40,14 +45,12 @@ def run_weekly(
 ):
     """
     Internal-only endpoint.
-
-    Guarantees:
     - Safe to call multiple times
-    - Will NOT publish during open tracking
-    - Handles region publish + unlock
+    - Publishes charts
+    - Locks admin injection
+    - Unlocks next tracking window
     """
 
-    # Guardrail: never publish while tracking is open
     if is_tracking_open():
         return {
             "status": "skipped",
