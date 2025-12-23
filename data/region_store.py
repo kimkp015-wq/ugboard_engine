@@ -1,64 +1,39 @@
 import json
 from pathlib import Path
-from datetime import datetime
 
-REGION_LOCKS_FILE = Path("data/region_locks.json")
+STATE_FILE = Path("data/region_state.json")
 
-DEFAULT_LOCKS = {
-    "Eastern": False,
-    "Northern": False,
-    "Western": False,
-    "last_updated": None,
-}
+VALID_REGIONS = ["Eastern", "Northern", "Western"]
 
 
-def load_region_locks() -> dict:
-    if not REGION_LOCKS_FILE.exists():
-        save_region_locks(DEFAULT_LOCKS)
-        return DEFAULT_LOCKS.copy()
-
+def _load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {}
     try:
-        return json.loads(REGION_LOCKS_FILE.read_text())
+        return json.loads(STATE_FILE.read_text())
     except Exception:
-        return DEFAULT_LOCKS.copy()
+        return {}
 
 
-def save_region_locks(data: dict) -> None:
-    REGION_LOCKS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    REGION_LOCKS_FILE.write_text(json.dumps(data, indent=2))
+def _save_state(state: dict) -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
 def is_region_locked(region: str) -> bool:
-    locks = load_region_locks()
-    return bool(locks.get(region, False))
+    state = _load_state()
+    return state.get(region) == "locked"
 
 
 def lock_region(region: str) -> None:
-    locks = load_region_locks()
-    locks[region] = True
-    locks["last_updated"] = datetime.utcnow().isoformat()
-    save_region_locks(locks)
+    if region not in VALID_REGIONS:
+        raise ValueError("Invalid region")
 
+    state = _load_state()
+    state[region] = "locked"
+    _save_state(state)
 
-def unlock_region(region: str) -> None:
-    locks = load_region_locks()
-    locks[region] = False
-    locks["last_updated"] = datetime.utcnow().isoformat()
-    save_region_locks(locks)
-
-def publish_region(region: str):
-    """
-    Publish = lock region.
-    """
-    lock_region(region)
 
 def any_region_locked() -> bool:
-    locks = load_region_locks()
-
-    for key, value in locks.items():
-        if key == "last_updated":
-            continue
-        if value is True:
-            return True
-
-    return False
+    state = _load_state()
+    return any(v == "locked" for v in state.values())
