@@ -35,3 +35,4 @@ def ensure_injection_allowed(
             status_code=403,
             detail="Injection access denied",
         )
+ 
