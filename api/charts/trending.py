@@ -4,26 +4,25 @@ import os
 
 router = APIRouter()
 
-TOP100_PATH = "data/top100.json"
+TRENDING_PATH = "data/trending.json"
 
 
 @router.get("/trending")
 def get_trending():
-    if not os.path.exists(TOP100_PATH):
+    if not os.path.exists(TRENDING_PATH):
         return {
             "status": "ok",
             "count": 0,
             "items": []
         }
 
-    with open(TOP100_PATH, "r") as f:
+    with open(TRENDING_PATH, "r") as f:
         data = json.load(f)
 
     items = data.get("items", [])
 
-    # Trending = top 10 by position/score (already sorted)
     return {
         "status": "ok",
-        "count": min(10, len(items)),
-        "items": items[:10]
+        "count": len(items),
+        "items": items
     }
