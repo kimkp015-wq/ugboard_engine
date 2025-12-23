@@ -1,10 +1,19 @@
 # api/admin/internal.py
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from data.permissions import ensure_internal_allowed
 
 router = APIRouter()
 
 
-@router.get("/internal/ping")
-def internal_ping():
-    return {"status": "internal ok"}
+@router.get(
+    "/ping",
+    summary="(Internal) Scheduler / system health check",
+)
+def internal_ping(
+    _: None = Depends(ensure_internal_allowed),
+):
+    return {
+        "status": "ok",
+        "scope": "internal",
+    }
