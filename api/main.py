@@ -17,3 +17,7 @@ def root():
         "environment": ENV,
         "docs_enabled": ENV != "production",
     }
+    # AFTER app is created
+from api.admin.health import router as health_router
+
+app.include_router(health_router, tags=["Health"])
