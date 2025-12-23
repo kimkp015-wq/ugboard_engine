@@ -1,30 +1,27 @@
+# data/chart_week.py
+
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from pathlib import Path
 
 EAT = ZoneInfo("Africa/Kampala")
-
-TRACKING_START_WEEKDAY = 0  # Monday
-TRACKING_END_WEEKDAY = 3    # Thursday
+STATE_FILE = Path("data/chart_week_state.json")
 
 
-def current_chart_week() -> str:
+def open_new_tracking_week():
     """
-    Returns chart week identifier (YYYY-WW) in EAT timezone.
+    Opens a new tracking window after weekly publish.
+    Idempotent and safe.
     """
-    now = datetime.now(EAT)
-    year, week, _ = now.isocalendar()
-    return f"{year}-W{week:02d}"
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+    next_week = {
+        "opened_at": datetime.now(EAT).isoformat(),
+        "status": "open",
+    }
 
-def is_tracking_open() -> bool:
-    """
-    Tracking window:
-    Monday 00:00 EAT → Thursday 23:59 EAT
-    """
-    now = datetime.now(EAT)
-    weekday = now.weekday()
+    STATE_FILE.write_text(
+        __import__("json").dumps(next_week, indent=2)
+    )
 
-    if TRACKING_START_WEEKDAY <= weekday <= TRACKING_END_WEEKDAY:
-        return True
-
-    return False
+    return next_week
