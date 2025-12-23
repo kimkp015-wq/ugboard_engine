@@ -1,28 +1,17 @@
-from data.region_store import lock_region
-from data.chart_week import open_new_tracking_week
+from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+EAT = ZoneInfo("Africa/Kampala")
+FILE = Path("data/last_scheduler_run.txt")
 
 
-def run_weekly_scheduler():
-    """
-    Weekly automation:
-    - publish regions
-    - lock charts
-    - open next tracking window
-    """
+def record_scheduler_run():
+    FILE.parent.mkdir(parents=True, exist_ok=True)
+    FILE.write_text(datetime.now(EAT).isoformat())
 
-    # 1️⃣ Publish / lock regions
-    lock_region("Eastern")
-    lock_region("Northern")
-    lock_region("Western")
 
-    # 2️⃣ Open next tracking window
-    open_new_tracking_week()
-
-    # 3️⃣ Record successful run (IMPORT HERE to avoid circular import)
-    from data.scheduler_state import record_scheduler_run
-    record_scheduler_run()
-
-    return {
-        "published": ["Eastern", "Northern", "Western"],
-        "status": "completed",
-    }
+def get_last_scheduler_run() -> str | None:
+    if not FILE.exists():
+        return None
+    return FILE.read_text().strip()
