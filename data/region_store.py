@@ -3,6 +3,9 @@
 import json
 from pathlib import Path
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+EAT = ZoneInfo("Africa/Kampala")
 
 REGION_LOCKS_FILE = Path("data/region_locks.json")
 
@@ -10,13 +13,13 @@ DEFAULT_LOCKS = {
     "Eastern": False,
     "Northern": False,
     "Western": False,
-    "last_updated": None
+    "last_updated": None,
 }
 
 
-def load_region_locks():
+def load_region_locks() -> dict:
     if not REGION_LOCKS_FILE.exists():
-        save_region_locks(DEFAULT_LOCKS)
+        save_region_locks(DEFAULT_LOCKS.copy())
         return DEFAULT_LOCKS.copy()
 
     try:
@@ -38,23 +41,24 @@ def is_region_locked(region: str) -> bool:
 def lock_region(region: str):
     locks = load_region_locks()
     locks[region] = True
-    locks["last_updated"] = datetime.utcnow().isoformat()
+    locks["last_updated"] = datetime.now(EAT).isoformat()
     save_region_locks(locks)
 
 
 def unlock_region(region: str):
     locks = load_region_locks()
     locks[region] = False
-    locks["last_updated"] = datetime.utcnow().isoformat()
+    locks["last_updated"] = datetime.now(EAT).isoformat()
     save_region_locks(locks)
 
 
-# 🔒 REQUIRED BY regions_publish.py
+# 🔒 REQUIRED BY publish flows
 def publish_region(region: str):
     """
     Publish = lock region.
     Snapshot logic handled elsewhere.
     """
+    lock_region(region)
 
 
 def any_region_locked() -> bool:
@@ -71,4 +75,3 @@ def any_region_locked() -> bool:
             return True
 
     return False
-
