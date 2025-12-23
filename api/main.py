@@ -35,11 +35,13 @@ def root():
 # Health
 from api.admin.health import router as health_router
 
-# Admin (READ + WRITE + INTERNAL)
+# Admin (human-triggered)
 from api.admin.alerts import router as alerts_router
 from api.admin.publish import router as publish_router
+
+# Internal (system / cron)
 from api.admin.internal import router as internal_router
-from api.admin.weekly import router as weekly_router   # ✅ ADDED
+from api.admin.weekly import router as weekly_router
 
 # Charts (READ-ONLY)
 from api.charts.top100 import router as top100_router
@@ -99,7 +101,7 @@ app.include_router(
     tags=["Ingestion"],
 )
 
-# Admin
+# Admin (HUMAN)
 app.include_router(
     alerts_router,
     prefix="/admin",
@@ -112,14 +114,15 @@ app.include_router(
     tags=["Admin"],
 )
 
+# Internal (SYSTEM / CRON)
 app.include_router(
-    weekly_router,          # ✅ ADDED
-    prefix="/admin",
-    tags=["Admin"],
+    internal_router,
+    prefix="/internal",
+    tags=["Internal"],
 )
 
 app.include_router(
-    internal_router,
-    prefix="/admin",
-    tags=["Admin"],
+    weekly_router,
+    prefix="/internal",
+    tags=["Internal"],
 )
