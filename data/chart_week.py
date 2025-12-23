@@ -10,23 +10,32 @@ STATE_FILE = Path("data/chart_week_state.json")
 
 
 def _load_state() -> dict:
+    """
+    Load chart week state from disk.
+    Safe: never raises.
+    """
     if not STATE_FILE.exists():
         return {}
 
     try:
         return json.loads(STATE_FILE.read_text())
-    except json.JSONDecodeError:
-        return {}
     except Exception:
         return {}
 
 
 def is_tracking_open() -> bool:
+    """
+    Returns True if tracking window is open.
+    """
     state = _load_state()
     return state.get("status") == "open"
 
 
 def open_new_tracking_week() -> dict:
+    """
+    Opens a new tracking window.
+    Idempotent and safe.
+    """
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
     state = {
@@ -39,8 +48,13 @@ def open_new_tracking_week() -> dict:
 
 
 def close_tracking_week() -> dict:
-    state = _load_state()
+    """
+    Closes the current tracking window.
+    Safe even if already closed.
+    """
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+    state = _load_state()
     state.update(
         {
             "status": "closed",
@@ -53,4 +67,8 @@ def close_tracking_week() -> dict:
 
 
 def current_chart_week() -> dict:
+    """
+    Returns raw chart week state.
+    Read-only helper.
+    """
     return _load_state()
