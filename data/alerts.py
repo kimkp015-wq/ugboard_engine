@@ -3,8 +3,16 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from data.region_store import is_region_locked
 from data.chart_week import current_chart_week
+
+# Import guarded at runtime, not startup
+def _safe_is_region_locked(region: str) -> bool:
+    try:
+        from data.region_store import is_region_locked
+        return is_region_locked(region)
+    except Exception:
+        return False
+
 
 EAT = ZoneInfo("Africa/Kampala")
 
@@ -16,7 +24,7 @@ def detect_partial_publish():
     Detect if some regions are locked (published)
     while others are not.
     """
-    locked = [r for r in REGIONS if is_region_locked(r)]
+    locked = [r for r in REGIONS if _safe_is_region_locked(r)]
 
     if locked and len(locked) < len(REGIONS):
         return {
@@ -40,7 +48,6 @@ def detect_scheduler_stall(last_run_iso: str | None):
     try:
         last_run = datetime.fromisoformat(last_run_iso)
 
-        # Force timezone safety
         if last_run.tzinfo is None:
             last_run = last_run.replace(tzinfo=EAT)
 
