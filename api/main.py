@@ -1,12 +1,9 @@
-from fastapi import FastAPI
-from fastapi import Response
+# api/main.py
 
-@app.get("/favicon.ico", include_in_schema=False)
-def favicon():
-    return Response(status_code=204)
+from fastapi import FastAPI
 
 # =========================
-# Create app FIRST (MANDATORY)
+# Create app FIRST
 # =========================
 app = FastAPI(title="UG Board Engine")
 
@@ -17,27 +14,26 @@ app = FastAPI(title="UG Board Engine")
 def root():
     return {
         "status": "ok",
-        "engine": "ugboard"
+        "engine": "ugboard",
     }
 
 # =========================
-# Admin / System Routers
+# Admin routers
 # =========================
 from api.admin.health import router as health_router
 from api.admin.status import router as status_router
 from api.admin.internal import router as internal_router
-from api.admin.admin import router as admin_router
 from api.admin.publish import router as publish_router
 
 # =========================
-# Charts (READ-ONLY)
+# Charts
 # =========================
 from api.charts.top100 import router as top100_router
 from api.charts.trending import router as trending_router
 from api.charts.regions import router as regions_router
 
 # =========================
-# Ingestion (WRITE)
+# Ingestion
 # =========================
 from api.ingestion.youtube import router as youtube_router
 from api.ingestion.radio import router as radio_router
@@ -47,7 +43,7 @@ from api.ingestion.tv import router as tv_router
 # Router registration
 # =========================
 
-# Health (no prefix -- must be lightweight)
+# Health
 app.include_router(health_router)
 
 # Charts
@@ -63,5 +59,4 @@ app.include_router(tv_router, prefix="/ingest", tags=["Ingestion"])
 # Admin
 app.include_router(internal_router, prefix="/admin", tags=["Admin"])
 app.include_router(status_router, prefix="/admin", tags=["Admin"])
-app.include_router(admin_router, prefix="/admin", tags=["Admin"])
 app.include_router(publish_router, prefix="/admin", tags=["Admin"])
