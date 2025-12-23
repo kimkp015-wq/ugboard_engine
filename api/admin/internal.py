@@ -1,29 +1,10 @@
 # api/admin/internal.py
 
-from fastapi import APIRouter, Depends, HTTPException, Header
-from api.admin.weekly_scheduler import run_weekly_scheduler
-from data.chart_week import is_tracking_open
+from fastapi import APIRouter
 
 router = APIRouter()
 
 
-def verify_internal_call(
-    x_internal_token: str | None = Header(default=None),
-):
-    if not x_internal_token:
-        raise HTTPException(status_code=401, detail="Missing internal token")
-
-
-@router.post("/internal/weekly-run", summary="Run weekly scheduler")
-def run_weekly(_: None = Depends(verify_internal_call)):
-    if is_tracking_open():
-        return {
-            "status": "skipped",
-            "reason": "Tracking window still open",
-        }
-
-    result = run_weekly_scheduler()
-    return {
-        "status": "ok",
-        "result": result,
-    }
+@router.get("/internal/ping")
+def internal_ping():
+    return {"status": "internal ok"}
