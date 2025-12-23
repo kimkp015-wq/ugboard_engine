@@ -46,6 +46,11 @@ def unlock_region(region: str) -> None:
     locks["last_updated"] = datetime.utcnow().isoformat()
     save_region_locks(locks)
 
+def publish_region(region: str):
+    """
+    Publish = lock region.
+    """
+    lock_region(region)
 
 def any_region_locked() -> bool:
     locks = load_region_locks()
