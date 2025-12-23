@@ -1,0 +1,35 @@
+{
+  "engine": "UG Board Engine",
+  "version": "1.0",
+
+  "chart_week": {
+    "status": "open",
+    "week_id": null,
+    "opened_at": null,
+    "closed_at": null
+  },
+
+  "regions": {
+    "Eastern": {
+      "locked": false,
+      "last_snapshot": null
+    },
+    "Northern": {
+      "locked": false,
+      "last_snapshot": null
+    },
+    "Western": {
+      "locked": false,
+      "last_snapshot": null
+    }
+  },
+
+  "scheduler": {
+    "last_run": null,
+    "source": null
+  },
+
+  "safety": {
+    "publish_in_progress": false
+  }
+}
