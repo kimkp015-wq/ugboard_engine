@@ -1,43 +1,72 @@
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+# data/alerts.py
 
-from data.region_store import is_region_locked
-from data.chart_week import current_chart_week
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from pathlib import Path
+import json
 
 EAT = ZoneInfo("Africa/Kampala")
 
+AUDIT_FILE = Path("data/audit_log.json")
+ALERT_FILE = Path("data/alerts_log.json")
 
-def detect_scheduler_alerts() -> dict | None:
+
+def _load_audit() -> list:
+    if not AUDIT_FILE.exists():
+        return []
+    try:
+        return json.loads(AUDIT_FILE.read_text())
+    except Exception:
+        return []
+
+
+def _save_alert(alert: dict):
+    ALERT_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    existing = []
+    if ALERT_FILE.exists():
+        try:
+            existing = json.loads(ALERT_FILE.read_text())
+        except Exception:
+            existing = []
+
+    existing.append(alert)
+    ALERT_FILE.write_text(json.dumps(existing, indent=2))
+
+
+# =========================
+# MAIN ALERT CHECK
+# =========================
+def detect_publish_alert():
     """
-    Detect scheduler-related failures:
-    - Missed weekly publish
-    - Partial region publish
+    Detect missing or partial weekly publish.
+    Safe to call multiple times.
     """
 
     now = datetime.now(EAT)
-    week = current_chart_week()
+    today = now.date().isoformat()
 
-    locked_regions = [
-        region
-        for region in ("Eastern", "Northern", "Western")
-        if is_region_locked(region)
-    ]
+    audit = _load_audit()
 
-    # ❌ No region published by expected time (Monday 00:10 EAT)
-    if now.weekday() == 0 and now.hour >= 0 and not locked_regions:
-        return {
-            "type": "missed_publish",
-            "week": week,
-            "timestamp": now.isoformat(),
-        }
+    published_regions = {
+        a["region"]
+        for a in audit
+        if a.get("action") == "publish_region"
+        and a.get("timestamp", "").startswith(today)
+    }
 
-    # ⚠️ Partial publish
-    if 0 < len(locked_regions) < 3:
-        return {
-            "type": "partial_publish",
-            "week": week,
-            "regions_locked": locked_regions,
-            "timestamp": now.isoformat(),
-        }
+    expected = {"Eastern", "Northern", "Western"}
 
-    return None
+    if published_regions == expected:
+        return None  # all good
+
+    alert = {
+        "type": "weekly_publish_incomplete",
+        "date": today,
+        "published": sorted(published_regions),
+        "missing": sorted(expected - published_regions),
+        "timestamp": now.isoformat(),
+    }
+
+    _save_alert(alert)
+    return alert
