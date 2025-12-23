@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
 from data.region_store import is_region_locked
 from data.chart_week import current_chart_week
 
@@ -36,13 +37,25 @@ def detect_scheduler_stall(last_run_iso: str | None):
             "type": "scheduler_never_ran",
         }
 
-    last_run = datetime.fromisoformat(last_run_iso)
-    now = datetime.now(EAT)
+    try:
+        last_run = datetime.fromisoformat(last_run_iso)
 
-    if now - last_run > timedelta(days=7):
+        # Force timezone safety
+        if last_run.tzinfo is None:
+            last_run = last_run.replace(tzinfo=EAT)
+
+        now = datetime.now(EAT)
+
+        if now - last_run > timedelta(days=7):
+            return {
+                "type": "scheduler_stalled",
+                "last_run": last_run_iso,
+            }
+
+    except Exception:
         return {
-            "type": "scheduler_stalled",
-            "last_run": last_run_iso,
+            "type": "scheduler_invalid_timestamp",
+            "value": last_run_iso,
         }
 
     return None
@@ -63,7 +76,12 @@ def collect_alerts(last_scheduler_run: str | None):
     if scheduler:
         alerts.append(scheduler)
 
+    try:
+        week = current_chart_week()
+    except Exception:
+        week = None
+
     return {
-        "week": current_chart_week(),
+        "week": week,
         "alerts": alerts,
     }
