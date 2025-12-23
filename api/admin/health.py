@@ -1,12 +1,26 @@
+# api/admin/health.py
+
 from fastapi import APIRouter
-from data.alerts import detect_missed_publish
 
 router = APIRouter()
 
-@router.get("/admin/health")
-def health_check():
-    alert = detect_missed_publish()
+
+@router.get("/health")
+def health():
+    """
+    Health must always respond.
+    Alerts are OPTIONAL.
+    """
+    alert = None
+
+    try:
+        from data.alerts import detect_missed_publish
+        alert = detect_missed_publish()
+    except Exception:
+        alert = "alerts_unavailable"
+
     return {
         "status": "ok",
-        "alert": alert
+        "engine": "ugboard",
+        "alert": alert,
     }
