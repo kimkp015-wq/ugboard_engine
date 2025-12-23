@@ -1,34 +1,57 @@
 # data/scheduler_state.py
 
+import json
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from typing import Dict
 
 EAT = ZoneInfo("Africa/Kampala")
-FILE = Path("data/last_scheduler_run.txt")
+STATE_FILE = Path("data/scheduler_state.json")
 
 
-def record_scheduler_run() -> None:
+def _now() -> str:
+    return datetime.now(EAT).isoformat()
+
+
+def _load_state() -> Dict:
     """
-    Record the last successful scheduler run timestamp.
-    Safe to call multiple times.
+    Load scheduler state from disk.
+    Safe: never raises.
     """
-    FILE.parent.mkdir(parents=True, exist_ok=True)
-
-    timestamp = datetime.now(EAT).isoformat()
-    FILE.write_text(timestamp)
-
-
-def get_last_scheduler_run() -> str | None:
-    """
-    Return last scheduler run timestamp (ISO string).
-    Returns None if never run or file unreadable.
-    """
-    if not FILE.exists():
-        return None
+    if not STATE_FILE.exists():
+        return {}
 
     try:
-        value = FILE.read_text().strip()
-        return value or None
+        return json.loads(STATE_FILE.read_text())
     except Exception:
-        return None
+        return {}
+
+
+def record_scheduler_run(trigger: str = "unknown") -> Dict:
+    """
+    Record a successful scheduler run.
+
+    trigger examples:
+    - cron
+    - cloudflare_worker
+    - admin_manual
+    """
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    state = {
+        "last_run_at": _now(),
+        "trigger": trigger,
+    }
+
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+    return state
+
+
+def get_last_scheduler_run() -> Dict | None:
+    """
+    Return last scheduler run info.
+    Returns None if never run.
+    """
+    state = _load_state()
+    return state if state else None
