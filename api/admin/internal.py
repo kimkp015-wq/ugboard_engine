@@ -63,3 +63,16 @@ def run_weekly(
         "status": "ok",
         "result": result,
     }
+    @router.get(
+    "/internal/health",
+    summary="Internal scheduler authentication check",
+    tags=["Internal"],
+)
+def internal_health(
+    _: None = Depends(verify_internal_call),
+):
+    return {
+        "status": "ok",
+        "service": "ugboard-api",
+        "auth": "valid",
+    }
