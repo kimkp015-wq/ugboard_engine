@@ -1,27 +1,24 @@
 # api/admin/alerts.py
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from data.permissions import ensure_admin_allowed
 
 router = APIRouter()
 
 
 @router.get(
     "/alerts",
-    summary="Admin alerts (missed publish, partial failures)",
+    summary="Admin alerts (missed or failed publishes)",
+    tags=["Admin"],
 )
-def get_alerts():
+def admin_alerts(_: None = Depends(ensure_admin_allowed)):
     """
-    Admin-facing alerts.
-    SAFE: never crashes the app.
+    Returns engine alerts.
+    SAFE: never crashes startup.
     """
-    try:
-        from data.alerts import detect_missed_publish
-        alert = detect_missed_publish()
-    except Exception as e:
-        return {
-            "status": "degraded",
-            "error": str(e),
-        }
+    from data.alerts import detect_missed_publish
+
+    alert = detect_missed_publish()
 
     return {
         "status": "ok",

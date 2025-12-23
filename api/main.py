@@ -22,6 +22,7 @@ from api.admin.internal import router as internal_router
 from api.admin.status import router as status_router
 from api.admin.health import router as health_router
 from api.admin.alerts import router as alerts_router
+from api.admin.alerts import router as alerts_router
 
 # =========================
 # CREATE APP (ONCE)
@@ -55,4 +56,5 @@ app.include_router(publish_router, prefix="/admin", tags=["Admin"])
 app.include_router(internal_router, prefix="/admin", tags=["Admin"])
 app.include_router(status_router, prefix="/admin", tags=["Admin"])
 app.include_router(health_router, prefix="/admin", tags=["Admin"])
+app.include_router(alerts_router, prefix="/admin", tags=["Admin"])
 app.include_router(alerts_router, prefix="/admin", tags=["Admin"])
