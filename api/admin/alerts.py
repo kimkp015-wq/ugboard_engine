@@ -1,28 +1,23 @@
 # api/admin/alerts.py
 
 from fastapi import APIRouter, Depends
-from data.alerts import detect_publish_alert
+from data.alerts import collect_alerts
 from data.permissions import ensure_admin_allowed
+from data.scheduler_state import get_last_scheduler_run
 
 router = APIRouter()
 
 
 @router.get(
     "/alerts",
-    summary="Check for failed or partial weekly publish",
+    summary="Engine alert status (admin only)",
 )
-def check_alerts(
+def get_alerts(
     _: None = Depends(ensure_admin_allowed),
 ):
-    alert = detect_publish_alert()
-
-    if not alert:
-        return {
-            "status": "ok",
-            "message": "No alerts",
-        }
-
-    return {
-        "status": "alert",
-        "alert": alert,
-    }
+    """
+    Read-only alert endpoint.
+    Never mutates state.
+    """
+    last_run = get_last_scheduler_run()
+    return collect_alerts(last_run)

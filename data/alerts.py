@@ -1,72 +1,69 @@
 # data/alerts.py
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from pathlib import Path
-import json
+from data.region_store import is_region_locked
+from data.chart_week import current_chart_week
 
 EAT = ZoneInfo("Africa/Kampala")
 
-AUDIT_FILE = Path("data/audit_log.json")
-ALERT_FILE = Path("data/alerts_log.json")
+REGIONS = ("Eastern", "Northern", "Western")
 
 
-def _load_audit() -> list:
-    if not AUDIT_FILE.exists():
-        return []
-    try:
-        return json.loads(AUDIT_FILE.read_text())
-    except Exception:
-        return []
-
-
-def _save_alert(alert: dict):
-    ALERT_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-    existing = []
-    if ALERT_FILE.exists():
-        try:
-            existing = json.loads(ALERT_FILE.read_text())
-        except Exception:
-            existing = []
-
-    existing.append(alert)
-    ALERT_FILE.write_text(json.dumps(existing, indent=2))
-
-
-# =========================
-# MAIN ALERT CHECK
-# =========================
-def detect_publish_alert():
+def detect_partial_publish():
     """
-    Detect missing or partial weekly publish.
-    Safe to call multiple times.
+    Detect if some regions are locked (published)
+    while others are not.
     """
+    locked = [r for r in REGIONS if is_region_locked(r)]
 
+    if locked and len(locked) < len(REGIONS):
+        return {
+            "type": "partial_publish",
+            "locked_regions": locked,
+            "missing_regions": [r for r in REGIONS if r not in locked],
+        }
+
+    return None
+
+
+def detect_scheduler_stall(last_run_iso: str | None):
+    """
+    Detect if scheduler has not run in expected window.
+    """
+    if not last_run_iso:
+        return {
+            "type": "scheduler_never_ran",
+        }
+
+    last_run = datetime.fromisoformat(last_run_iso)
     now = datetime.now(EAT)
-    today = now.date().isoformat()
 
-    audit = _load_audit()
+    if now - last_run > timedelta(days=7):
+        return {
+            "type": "scheduler_stalled",
+            "last_run": last_run_iso,
+        }
 
-    published_regions = {
-        a["region"]
-        for a in audit
-        if a.get("action") == "publish_region"
-        and a.get("timestamp", "").startswith(today)
+    return None
+
+
+def collect_alerts(last_scheduler_run: str | None):
+    """
+    Single alert collection entrypoint.
+    SAFE to call anytime.
+    """
+    alerts = []
+
+    partial = detect_partial_publish()
+    if partial:
+        alerts.append(partial)
+
+    scheduler = detect_scheduler_stall(last_scheduler_run)
+    if scheduler:
+        alerts.append(scheduler)
+
+    return {
+        "week": current_chart_week(),
+        "alerts": alerts,
     }
-
-    expected = {"Eastern", "Northern", "Western"}
-
-    if published_regions == expected:
-        return None  # all good
-
-    alert = {
-        "type": "weekly_publish_incomplete",
-        "date": today,
-        "published": sorted(published_regions),
-        "missing": sorted(expected - published_regions),
-        "timestamp": now.isoformat(),
-    }
-
-    _save_alert(alert)
-    return alert
