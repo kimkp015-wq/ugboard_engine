@@ -7,7 +7,7 @@ from fastapi import FastAPI
 ENV = os.getenv("ENV", "development")
 
 # =========================
-# Create app FIRST
+# Create app FIRST (critical)
 # =========================
 app = FastAPI(
     title="UG Board Engine",
@@ -29,6 +29,7 @@ def root():
 
 # =========================
 # Import routers AFTER app exists
+# (prevents crashes & circular imports)
 # =========================
 
 # Health
@@ -41,6 +42,7 @@ from api.admin.internal import router as internal_router
 # Charts (READ-ONLY)
 from api.charts.top100 import router as top100_router
 from api.charts.trending import router as trending_router
+from api.charts.regions import router as regions_router
 
 # =========================
 # Register routers
@@ -49,31 +51,37 @@ from api.charts.trending import router as trending_router
 # Health
 app.include_router(
     health_router,
-    tags=["Health"]
+    tags=["Health"],
 )
 
 # Charts
 app.include_router(
     top100_router,
     prefix="/charts",
-    tags=["Charts"]
+    tags=["Charts"],
 )
 
 app.include_router(
     trending_router,
     prefix="/charts",
-    tags=["Charts"]
+    tags=["Charts"],
+)
+
+app.include_router(
+    regions_router,
+    prefix="/charts",
+    tags=["Charts"],
 )
 
 # Admin
 app.include_router(
     alerts_router,
     prefix="/admin",
-    tags=["Admin"]
+    tags=["Admin"],
 )
 
 app.include_router(
     internal_router,
     prefix="/admin",
-    tags=["Admin"]
+    tags=["Admin"],
 )
