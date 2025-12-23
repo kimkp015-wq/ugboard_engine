@@ -1,4 +1,4 @@
-f# api/admin/internal.py
+# api/admin/internal.py
 
 from fastapi import APIRouter, Depends, HTTPException, Header
 from api.admin.weekly_scheduler import run_weekly_scheduler
@@ -42,4 +42,4 @@ def run_weekly(
     return {
         "status": "ok",
         "result": result,
-    }()
+    }
