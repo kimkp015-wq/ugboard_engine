@@ -1,5 +1,3 @@
-# api/admin/publish.py
-
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 
@@ -14,7 +12,7 @@ from data.permissions import ensure_admin_allowed
 
 router = APIRouter()
 
-# Canonical region list (single source)
+# Canonical region list (single source of truth)
 VALID_REGIONS = {"Eastern", "Northern", "Western"}
 
 
@@ -56,11 +54,11 @@ def publish_region(
 
     lock_region(region)
 
-    log_audit(
-        action="publish_region",
-        region=region,
-        timestamp=datetime.utcnow().isoformat(),
-    )
+    log_audit({
+        "action": "publish_region",
+        "region": region,
+        "timestamp": datetime.utcnow().isoformat(),
+    })
 
     return {
         "status": "ok",
@@ -96,11 +94,11 @@ def unpublish_region(
 
     unlock_region(region)
 
-    log_audit(
-        action="unpublish_region",
-        region=region,
-        timestamp=datetime.utcnow().isoformat(),
-    )
+    log_audit({
+        "action": "unpublish_region",
+        "region": region,
+        "timestamp": datetime.utcnow().isoformat(),
+    })
 
     return {
         "status": "ok",
