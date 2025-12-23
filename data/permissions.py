@@ -7,43 +7,46 @@ from fastapi import Header, HTTPException
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 INJECT_TOKEN = os.getenv("INJECT_TOKEN")
-INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN")
+X_INTERNAL_TOKEN = os.getenv("X_INTERNAL_TOKEN")
 
 # =========================
-# Admin permission
+# Admin permission (Swagger / humans)
+# Header: Authorization
 # =========================
 
 def ensure_admin_allowed(
-    x_admin_token: str = Header(None),
+    authorization: str = Header(None),
 ):
     if not ADMIN_TOKEN:
-        raise HTTPException(500, "ADMIN_TOKEN not configured")
+        raise HTTPException(status_code=500, detail="ADMIN_TOKEN not configured")
 
-    if x_admin_token != ADMIN_TOKEN:
-        raise HTTPException(status_code=403, detail="Access denied")
+    if authorization != ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Admin access denied")
 
 # =========================
-# Ingestion permission
+# Ingestion permission (YouTube / Radio / TV)
+# Header: Authorization
 # =========================
 
 def ensure_injection_allowed(
-    x_inject_token: str = Header(None),
+    authorization: str = Header(None),
 ):
     if not INJECT_TOKEN:
-        raise HTTPException(500, "INJECT_TOKEN not configured")
+        raise HTTPException(status_code=500, detail="INJECT_TOKEN not configured")
 
-    if x_inject_token != INJECT_TOKEN:
+    if authorization != INJECT_TOKEN:
         raise HTTPException(status_code=403, detail="Injection access denied")
 
 # =========================
-# Internal (cron / system)
+# Internal permission (Cloudflare cron)
+# Header: X-Internal-Token
 # =========================
 
 def ensure_internal_allowed(
-    x_internal_token: str = Header(None),
+    x_internal_token: str = Header(None, alias="X-Internal-Token"),
 ):
-    if not INTERNAL_TOKEN:
-        raise HTTPException(500, "INTERNAL_TOKEN not configured")
+    if not X_INTERNAL_TOKEN:
+        raise HTTPException(status_code=500, detail="X_INTERNAL_TOKEN not configured")
 
-    if x_internal_token != INTERNAL_TOKEN:
-        raise HTTPException(status_code=403, detail="Access denied")
+    if x_internal_token != X_INTERNAL_TOKEN:
+        raise HTTPException(status_code=403, detail="Internal access denied")
