@@ -1,6 +1,7 @@
 # api/admin/alerts.py
 
 from fastapi import APIRouter, Depends
+
 from data.alerts import collect_alerts
 from data.permissions import ensure_admin_allowed
 from data.scheduler_state import get_last_scheduler_run
@@ -18,6 +19,7 @@ def get_alerts(
     """
     Read-only alert endpoint.
     Never mutates state.
+    Safe to call anytime.
     """
     last_run = get_last_scheduler_run()
     return collect_alerts(last_run)
