@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from data.permissions import ensure_admin_allowed
+from data.permissions import ensure_internal_allowed
 from data.chart_week import open_new_tracking_week
 from data.region_store import lock_region
 from data.scheduler_state import record_scheduler_run
@@ -9,10 +9,10 @@ router = APIRouter()
 
 @router.post(
     "/weekly-run",
-    summary="Run weekly publish and open new chart week",
+    summary="(Internal) Run weekly publish and open new chart week",
 )
 def run_weekly(
-    _: None = Depends(ensure_admin_allowed),
+    _: None = Depends(ensure_internal_allowed),
 ):
     # Lock all regions
     lock_region("Eastern")
@@ -29,4 +29,5 @@ def run_weekly(
         "status": "ok",
         "published_regions": ["Eastern", "Northern", "Western"],
         "week": week,
+        "trigger": "internal_scheduler",
     }
