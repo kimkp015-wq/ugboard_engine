@@ -1,26 +1,38 @@
-# api/admin/internal.py
-
 from fastapi import APIRouter, Depends, HTTPException, Header
+from typing import Optional
+
 from api.admin.weekly_scheduler import run_weekly_scheduler
 from data.chart_week import is_tracking_open
 
 router = APIRouter()
 
 
+# =========================
+# Internal call protection
+# =========================
 def verify_internal_call(
-    x_internal_token: str | None = Header(default=None),
+    x_internal_token: Optional[str] = Header(default=None),
 ):
     """
     Prevent public access.
-    Token should be injected via Cloudflare / Railway secret.
+
+    This token MUST be injected via:
+    - Cloudflare Scheduler
+    - Railway cron
     """
     if not x_internal_token:
-        raise HTTPException(status_code=401, detail="Missing internal token")
+        raise HTTPException(
+            status_code=401,
+            detail="Missing internal token",
+        )
 
 
+# =========================
+# Weekly automation runner
+# =========================
 @router.post(
     "/internal/weekly-run",
-    summary="Run weekly region publish/unlock automation (EAT)",
+    summary="Run weekly publish / unlock automation (EAT)",
     tags=["Internal"],
 )
 def run_weekly(
@@ -28,13 +40,14 @@ def run_weekly(
 ):
     """
     Internal-only endpoint.
+
+    Guarantees:
     - Safe to call multiple times
-    - Publishes charts
-    - Locks admin injection
-    - Unlocks next tracking window
+    - Will NOT publish during open tracking
+    - Handles region publish + unlock
     """
 
-    # Guardrail: do NOT allow weekly publish during open tracking
+    # Guardrail: never publish while tracking is open
     if is_tracking_open():
         return {
             "status": "skipped",
