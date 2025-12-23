@@ -1,3 +1,5 @@
+# api/admin/publish.py
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from data.permissions import ensure_admin_allowed
@@ -20,7 +22,7 @@ def publish_weekly(
 ):
     published = []
 
-    # 1️⃣ Snapshot + lock each region
+    # 1️⃣ Snapshot + lock each region (idempotent)
     for region in REGIONS:
         if is_region_locked(region):
             continue
@@ -35,13 +37,20 @@ def publish_weekly(
                 detail=f"Failed publishing {region}: {str(e)}",
             )
 
-    # 2️⃣ Close current week
-    close_tracking_week()
+    # 2️⃣ If nothing new was published, stop safely
+    if not published:
+        return {
+            "status": "ok",
+            "published_regions": [],
+            "week_rotated": False,
+            "message": "All regions already published",
+        }
 
-    # 3️⃣ Open new tracking week
+    # 3️⃣ Rotate chart week
+    close_tracking_week()
     open_new_tracking_week()
 
-    # 4️⃣ Record scheduler/admin run
+    # 4️⃣ Record admin run
     record_scheduler_run()
 
     return {
