@@ -1,4 +1,9 @@
 from fastapi import FastAPI
+from fastapi import Response
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return Response(status_code=204)
 
 # =========================
 # Create app FIRST (MANDATORY)
