@@ -45,3 +45,10 @@ app.include_router(health_router, tags=["Health"])
 # Admin
 app.include_router(alerts_router, prefix="/admin", tags=["Admin"])
 app.include_router(internal_router, prefix="/admin", tags=["Admin"])
+
+from api.charts.top100 import router as top100_router
+app.include_router(
+    top100_router,
+    prefix="/charts",
+    tags=["Charts"]
+)
