@@ -1,14 +1,7 @@
 from fastapi import FastAPI
-from api.admin.status import router as status_router
-from api.admin.internal import router as internal_router
-from api.admin.health import router as health_router
 
-app.include_router(health_router)
-from api.admin.publish import router as publish_router
-# from api.admin.regions_publish import router as regions_publish_router
-# app.include_router(regions_publish_router, prefix="/admin", tags=["Admin"])
 # =========================
-# Create app FIRST
+# Create app FIRST (MANDATORY)
 # =========================
 app = FastAPI(title="UG Board Engine")
 
@@ -22,6 +15,14 @@ def root():
         "engine": "ugboard"
     }
 
+# =========================
+# Admin / System Routers
+# =========================
+from api.admin.health import router as health_router
+from api.admin.status import router as status_router
+from api.admin.internal import router as internal_router
+from api.admin.admin import router as admin_router
+from api.admin.publish import router as publish_router
 
 # =========================
 # Charts (READ-ONLY)
@@ -30,7 +31,6 @@ from api.charts.top100 import router as top100_router
 from api.charts.trending import router as trending_router
 from api.charts.regions import router as regions_router
 
-
 # =========================
 # Ingestion (WRITE)
 # =========================
@@ -38,17 +38,12 @@ from api.ingestion.youtube import router as youtube_router
 from api.ingestion.radio import router as radio_router
 from api.ingestion.tv import router as tv_router
 
-
-# =========================
-# Admin (CONTROL / LOCKS)
-# =========================
-from api.admin.admin import router as admin_router
-from api.admin.publish import router as publish_router
-
-
 # =========================
 # Router registration
 # =========================
+
+# Health (no prefix -- must be lightweight)
+app.include_router(health_router)
 
 # Charts
 app.include_router(top100_router, prefix="/charts", tags=["Charts"])
@@ -65,5 +60,3 @@ app.include_router(internal_router, prefix="/admin", tags=["Admin"])
 app.include_router(status_router, prefix="/admin", tags=["Admin"])
 app.include_router(admin_router, prefix="/admin", tags=["Admin"])
 app.include_router(publish_router, prefix="/admin", tags=["Admin"])
-app.include_router(publish_router, prefix="/admin", tags=["Admin"])
-    
