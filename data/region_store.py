@@ -55,4 +55,20 @@ def publish_region(region: str):
     Publish = lock region.
     Snapshot logic handled elsewhere.
     """
-    lock_region(region)
+
+
+def any_region_locked() -> bool:
+    """
+    Returns True if at least one region is locked (published).
+    Used to hard-lock admin injection after weekly publish.
+    """
+    locks = load_region_locks()
+
+    for region, locked in locks.items():
+        if region == "last_updated":
+            continue
+        if locked is True:
+            return True
+
+    return False
+
