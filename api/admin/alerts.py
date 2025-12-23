@@ -1,25 +1,27 @@
 # api/admin/alerts.py
 
-from fastapi import APIRouter, Depends
-from data.alerts import detect_publish_alert
-from data.permissions import ensure_admin_allowed
+from fastapi import APIRouter
 
 router = APIRouter()
 
 
 @router.get(
-    "/alerts/publish",
-    summary="Check weekly publish status alerts",
-    tags=["Admin"],
+    "/alerts",
+    summary="Admin alerts (missed publish, partial failures)",
 )
-def publish_alert(
-    _: None = Depends(ensure_admin_allowed)
-):
+def get_alerts():
     """
-    Returns structured alert data if publish missing or partial.
-    Otherwise returns ok with no alert.
+    Admin-facing alerts.
+    SAFE: never crashes the app.
     """
-    alert = detect_publish_alert()
+    try:
+        from data.alerts import detect_missed_publish
+        alert = detect_missed_publish()
+    except Exception as e:
+        return {
+            "status": "degraded",
+            "error": str(e),
+        }
 
     return {
         "status": "ok",
