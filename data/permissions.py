@@ -1,38 +1,31 @@
 import os
-from fastapi import HTTPException, Security
-from fastapi.security import APIKeyHeader
-from data.region_store import any_region_locked
+from fastapi import Header, HTTPException
 
+INJECTION_TOKEN = os.getenv("INJECTION_TOKEN")
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
-INJECT_TOKEN = os.getenv("INJECT_TOKEN")
-
-api_key_header = APIKeyHeader(
-    name="Authorization",
-    auto_error=False
-)
-
-
-def ensure_admin_allowed(
-    api_key: str | None = Security(api_key_header),
-):
-    if not ADMIN_TOKEN or api_key != ADMIN_TOKEN:
-        raise HTTPException(
-            status_code=403,
-            detail="Admin access denied",
-        )
 
 
 def ensure_injection_allowed(
-    api_key: str | None = Security(api_key_header),
+    authorization: str = Header(
+        None,
+        description="Paste INJECTION token here (inject-ug-board-2025)"
+    )
 ):
-    if any_region_locked():
-        raise HTTPException(
-            status_code=423,
-            detail="Injection disabled after publish",
-        )
+    if not INJECTION_TOKEN:
+        raise HTTPException(500, "INJECTION_TOKEN not set on server")
 
-    if not INJECT_TOKEN or api_key != INJECT_TOKEN:
-        raise HTTPException(
-            status_code=403,
-            detail="Injection access denied",
-        )
+    if authorization != INJECTION_TOKEN:
+        raise HTTPException(403, "Injection access denied")
+
+
+def ensure_admin_allowed(
+    authorization: str = Header(
+        None,
+        description="Paste ADMIN token here (admin-ug-board-2025)"
+    )
+):
+    if not ADMIN_TOKEN:
+        raise HTTPException(500, "ADMIN_TOKEN not set on server")
+
+    if authorization != ADMIN_TOKEN:
+        raise HTTPException(403, "Admin access denied")
