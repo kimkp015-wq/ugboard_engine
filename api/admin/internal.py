@@ -1,38 +1,34 @@
 # api/admin/internal.py
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Request
-from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, Header
+
 from api.admin.weekly_scheduler import run_weekly_scheduler
 from data.chart_week import is_tracking_open
-from data.audit import log_audit
-import os
+from data.alerts import detect_internal_scheduler_alert
 
 router = APIRouter()
 
-INTERNAL_TOKEN = os.getenv("X_INTERNAL_TOKEN")
-
 
 def verify_internal_call(
-    request: Request,
     x_internal_token: str | None = Header(default=None),
 ):
     """
-    Verify internal scheduler / automation calls.
-    Logs failed attempts for security visibility.
+    Prevent public access.
+    Token must be injected via Cloudflare / Railway secret.
     """
+    if not x_internal_token:
+        raise HTTPException(status_code=401, detail="Missing internal token")
 
-    if not x_internal_token or x_internal_token != INTERNAL_TOKEN:
-        log_audit(
-            action="internal_auth_failed",
-            path=str(request.url.path),
-            ip=request.client.host if request.client else "unknown",
-            timestamp=datetime.utcnow().isoformat(),
-        )
 
-        raise HTTPException(
-            status_code=401,
-            detail="Unauthorized internal request",
-        )
+@router.get(
+    "/internal/health",
+    summary="Internal scheduler health check",
+    tags=["Internal"],
+)
+def internal_health(
+    _: None = Depends(verify_internal_call),
+):
+    return {"status": "ok"}
 
 
 @router.post(
@@ -45,10 +41,7 @@ def run_weekly(
 ):
     """
     Internal-only endpoint.
-    - Safe to call multiple times
-    - Publishes charts
-    - Locks admin injection
-    - Unlocks next tracking window
+    Safe to call multiple times.
     """
 
     if is_tracking_open():
@@ -57,22 +50,16 @@ def run_weekly(
             "reason": "Tracking window still open",
         }
 
-    result = run_weekly_scheduler()
+    try:
+        result = run_weekly_scheduler()
+    except Exception as e:
+        detect_internal_scheduler_alert(
+            event="weekly_run_failed",
+            detail=str(e),
+        )
+        raise
 
     return {
         "status": "ok",
         "result": result,
-    }
-    @router.get(
-    "/internal/health",
-    summary="Internal scheduler authentication check",
-    tags=["Internal"],
-)
-def internal_health(
-    _: None = Depends(verify_internal_call),
-):
-    return {
-        "status": "ok",
-        "service": "ugboard-api",
-        "auth": "valid",
     }
