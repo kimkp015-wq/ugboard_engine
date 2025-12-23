@@ -1,41 +1,62 @@
 # data/chart_week.py
 
 from datetime import datetime
-from zoneinfo import ZoneInfo
 from pathlib import Path
+from zoneinfo import ZoneInfo
 import json
 
 EAT = ZoneInfo("Africa/Kampala")
 STATE_FILE = Path("data/chart_week_state.json")
 
 
-def is_tracking_open() -> bool:
-    """
-    Returns True if a tracking window is currently open.
-    Safe if state file does not exist or is corrupted.
-    """
+def _load_state() -> dict | None:
     if not STATE_FILE.exists():
-        return False
-
+        return None
     try:
-        data = json.loads(STATE_FILE.read_text())
-        return data.get("status") == "open"
+        return json.loads(STATE_FILE.read_text())
     except Exception:
-        # Fail-safe: assume closed to avoid blocking system
-        return False
+        return None
+
+
+def _save_state(state: dict):
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
 def open_new_tracking_week() -> dict:
     """
-    Opens a new tracking window after weekly publish.
-    Idempotent and safe.
+    Opens a new tracking window.
+    Safe & idempotent.
     """
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-
     state = {
         "opened_at": datetime.now(EAT).isoformat(),
         "status": "open",
     }
-
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    _save_state(state)
     return state
+
+
+def close_tracking_week() -> dict:
+    """
+    Closes current tracking window.
+    """
+    state = _load_state() or {}
+    state["closed_at"] = datetime.now(EAT).isoformat()
+    state["status"] = "closed"
+    _save_state(state)
+    return state
+
+
+def is_tracking_open() -> bool:
+    """
+    Guardrail check for weekly publish.
+    """
+    state = _load_state()
+    return bool(state and state.get("status") == "open")
+
+
+def current_chart_week() -> dict | None:
+    """
+    Used by alerts & admin status.
+    """
+    return _load_state()
