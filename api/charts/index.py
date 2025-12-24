@@ -7,13 +7,11 @@ from data.index import get_index
 
 router = APIRouter()
 
-
 @router.get(
     "/index",
     summary="Public chart publish index",
-    response_model=List[Dict],
 )
-def read_index():
+def read_index() -> List[Dict]:
     """
     Read-only public index of published chart weeks.
 
