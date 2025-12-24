@@ -18,6 +18,7 @@ STATE_FILE = Path("data/scheduler_state.json")
 # -------------------------
 
 def _now() -> str:
+    """Current timestamp in EAT (ISO-8601)."""
     return datetime.now(EAT).isoformat()
 
 
@@ -25,12 +26,14 @@ def _safe_read_json(path: Path) -> Dict:
     """
     Safe JSON read.
     Never raises.
+    Always returns a dict.
     """
     if not path.exists():
         return {}
 
     try:
-        return json.loads(path.read_text())
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
     except Exception:
         return {}
 
