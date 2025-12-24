@@ -4,7 +4,6 @@ from fastapi import APIRouter, HTTPException
 
 from data.region_store import is_region_locked
 from data.region_snapshots import load_region_snapshot
-from data.chart_week import get_current_week_id
 
 router = APIRouter()
 
@@ -28,6 +27,18 @@ def _load_items_safe():
         return []
 
 
+def _get_week_id_safe() -> str:
+    """
+    Defensive week id fetch.
+    Never crashes charts.
+    """
+    try:
+        from data.chart_week import get_current_week_id
+        return get_current_week_id()
+    except Exception:
+        return "unknown-week"
+
+
 # -------------------------
 # Public API
 # -------------------------
@@ -35,6 +46,7 @@ def _load_items_safe():
 @router.get(
     "/regions/{region}",
     summary="Get Top 5 songs per region",
+    tags=["Charts"],
 )
 def get_region_chart(region: str):
     region = region.title()
@@ -45,7 +57,7 @@ def get_region_chart(region: str):
             detail="Invalid region name",
         )
 
-    week_id = get_current_week_id()
+    week_id = _get_week_id_safe()
 
     # 🔒 Locked → serve immutable snapshot
     if is_region_locked(region):
