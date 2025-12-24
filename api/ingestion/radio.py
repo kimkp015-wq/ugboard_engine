@@ -24,6 +24,7 @@ def ingest_radio(
     - song_id is primary key
     - Idempotent (safe to resend)
     - Radio plays merged into existing item
+    - Score recalculated centrally
     """
 
     # -------------------------
@@ -98,7 +99,7 @@ def ingest_radio(
             )
 
     # -------------------------
-    # Build canonical item
+    # Canonical merge payload
     # -------------------------
     item = {
         "song_id": payload["song_id"],
@@ -107,9 +108,6 @@ def ingest_radio(
         "region": region,
         "radio_plays": payload["plays"],
         "radio_stations": stations,
-        # Temporary scoring (merged later)
-        "score": payload["plays"],
-        "source": "radio",
     }
 
     # -------------------------

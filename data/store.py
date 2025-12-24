@@ -25,6 +25,22 @@ def _safe_write_json(path: Path, data) -> None:
     tmp.replace(path)
 
 
+def _calculate_score(item: Dict) -> int:
+    """
+    Deterministic score calculator (v1).
+
+    score =
+        youtube_views * 1
+      + radio_plays   * 50
+      + tv_appearances * 80
+    """
+    return (
+        int(item.get("youtube_views", 0)) * 1
+        + int(item.get("radio_plays", 0)) * 50
+        + int(item.get("tv_appearances", 0)) * 80
+    )
+
+
 # ------------------------
 # Public API
 # ------------------------
@@ -52,7 +68,6 @@ def load_items() -> List[Dict]:
         if not isinstance(item, dict):
             continue
 
-        # song_id is mandatory
         if "song_id" not in item:
             continue
 
@@ -64,7 +79,6 @@ def load_items() -> List[Dict]:
 def get_item_by_song_id(song_id: str) -> Optional[Dict]:
     """
     Fetch a single item by song_id.
-    Returns None if not found.
     """
     for item in load_items():
         if item.get("song_id") == song_id:
@@ -76,10 +90,10 @@ def upsert_item(new_item: Dict) -> Dict:
     """
     Insert or update a song record using song_id as primary key.
 
-    Rules:
-    - song_id is REQUIRED
-    - Existing items are updated (not duplicated)
+    Guarantees:
+    - Idempotent
     - Safe for repeated ingestion
+    - Score always recalculated
     """
     if not isinstance(new_item, dict):
         raise ValueError("item must be a dict")
@@ -89,17 +103,18 @@ def upsert_item(new_item: Dict) -> Dict:
         raise ValueError("Missing required field: song_id")
 
     items = load_items()
-    updated_indicator = False
+    updated = False
 
     for idx, item in enumerate(items):
         if item.get("song_id") == song_id:
-            # Merge (new values overwrite old ones)
             merged = {**item, **new_item}
+            merged["score"] = _calculate_score(merged)
             items[idx] = merged
             updated = True
             break
 
     if not updated:
+        new_item["score"] = _calculate_score(new_item)
         items.append(new_item)
 
     _safe_write_json(ITEMS_FILE, items)
@@ -109,7 +124,6 @@ def upsert_item(new_item: Dict) -> Dict:
 def delete_item(song_id: str) -> bool:
     """
     Delete a song by song_id.
-    Returns True if deleted.
     """
     items = load_items()
     filtered = [i for i in items if i.get("song_id") != song_id]
