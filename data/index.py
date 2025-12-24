@@ -1,101 +1,97 @@
 # data/index.py
 
-import json
 from pathlib import Path
-from datetime import datetime, timezone
-from typing import Dict, List, Set, Any
+import json
+from typing import Dict, List, Optional
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 INDEX_FILE = Path("data/index.json")
+EAT = ZoneInfo("Africa/Kampala")
 
 
 # -------------------------
 # Internal helpers
 # -------------------------
 
-def _empty_index() -> Dict[str, Any]:
-    return {
-        "published_weeks": [],
-        "last_published_at": None,
-    }
+def _now() -> str:
+    """Current timestamp in EAT (ISO-8601)."""
+    return datetime.now(EAT).isoformat()
 
 
-def _load_index() -> Dict[str, Any]:
+def _safe_read() -> List[Dict]:
     """
-    Load index.json safely.
-    Always returns a valid index dict.
+    Read index file safely.
+    Always returns a list.
     """
     if not INDEX_FILE.exists():
-        return _empty_index()
+        return []
 
     try:
         data = json.loads(INDEX_FILE.read_text())
-
-        if not isinstance(data, dict):
-            raise ValueError("Index is not a dict")
-
-        if "published_weeks" not in data or not isinstance(data["published_weeks"], list):
-            raise ValueError("Invalid published_weeks")
-
-        return {
-            "published_weeks": list(map(str, data["published_weeks"])),
-            "last_published_at": data.get("last_published_at"),
-        }
-
+        return data if isinstance(data, list) else []
     except Exception:
-        # Never crash engine boot due to index corruption
-        return _empty_index()
+        return []
 
 
-def _save_index(data: Dict[str, Any]) -> None:
+def _safe_write(data: List[Dict]) -> None:
     """
     Atomic write to index.json.
     """
     INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
-
     tmp = INDEX_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2))
     tmp.replace(INDEX_FILE)
-
-
-def _now_utc() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 # -------------------------
 # Public API
 # -------------------------
 
-def get_index() -> Dict[str, Any]:
+def record_week_publish(
+    *,
+    week_id: str,
+    regions: Optional[List[str]] = None,
+    trigger: Optional[str] = None,
+) -> Dict:
     """
-    Read-only index access.
+    Append an immutable publish record.
 
-    Used by:
-    - public charts
-    - admin dashboards
-    - internal verification
+    Safe to call once per week.
+    Idempotency must be guarded by caller.
     """
-    return _load_index()
 
+    index = _safe_read()
 
-def record_week_publish(week_id: str) -> None:
-    """
-    Record a successfully published chart week.
-    Idempotent and safe.
-    """
-    index = _load_index()
+    record: Dict = {
+        "week_id": week_id,
+        "published_at": _now(),
+    }
 
-    weeks: Set[str] = set(index.get("published_weeks", []))
-    weeks.add(week_id)
+    if regions:
+        record["regions"] = list(regions)
 
-    index["published_weeks"] = sorted(weeks)
-    index["last_published_at"] = _now_utc()
+    if trigger:
+        record["trigger"] = trigger
 
-    _save_index(index)
+    index.append(record)
+    _safe_write(index)
+
+    return record
 
 
 def week_already_published(week_id: str) -> bool:
     """
     Idempotency guard.
     """
-    index = _load_index()
-    return week_id in index.get("published_weeks", [])
+    return any(
+        isinstance(entry, dict) and entry.get("week_id") == week_id
+        for entry in _safe_read()
+    )
+
+
+def get_index() -> List[Dict]:
+    """
+    Read-only public index.
+    """
+    return _safe_read()
