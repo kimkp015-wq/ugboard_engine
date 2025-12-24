@@ -4,56 +4,87 @@ import json
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from typing import Dict
+from typing import Dict, Optional
+
+from data.chart_week import current_chart_week
 
 EAT = ZoneInfo("Africa/Kampala")
 
-STATE_FILE = Path("data/region_state.json")
+STATE_DIR = Path("data/region_state")
 INDEX_FILE = Path("data/index.json")
 
 VALID_REGIONS = ("Eastern", "Northern", "Western")
 
 
-# -------------------------
+# =========================
 # Helpers
-# -------------------------
+# =========================
+
 def _now() -> str:
     return datetime.now(EAT).isoformat()
+
+
+def _atomic_write(path: Path, data: Dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    tmp.replace(path)
 
 
 def _load_json(path: Path) -> Dict:
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text())
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
     except Exception:
         return {}
 
 
-def _save_json(path: Path, data: Dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2))
+def _get_week_id() -> str:
+    week = current_chart_week()
+    week_id = week.get("week_id")
+
+    if not isinstance(week_id, str) or not week_id:
+        raise RuntimeError("Chart week not initialized")
+
+    return week_id
 
 
-def _update_index(update: Dict) -> None:
+def _state_file() -> Path:
+    """
+    Week-scoped region state file.
+    """
+    return STATE_DIR / f"{_get_week_id()}.json"
+
+
+# =========================
+# Index handling (append-only)
+# =========================
+
+def _append_index(entry: Dict) -> None:
     index = _load_json(INDEX_FILE)
-    index.update(update)
-    _save_json(INDEX_FILE, index)
+
+    entries = index.get("entries")
+    if not isinstance(entries, list):
+        entries = []
+
+    entries.append(entry)
+    index["entries"] = entries
+
+    _atomic_write(INDEX_FILE, index)
 
 
-# -------------------------
+# =========================
 # Region state logic
-# -------------------------
+# =========================
+
 def _load_state() -> Dict:
-    """
-    Load region state from disk.
-    Safe: never raises.
-    """
-    return _load_json(STATE_FILE)
+    return _load_json(_state_file())
 
 
 def _save_state(state: Dict) -> None:
-    _save_json(STATE_FILE, state)
+    _atomic_write(_state_file(), state)
 
 
 def is_region_locked(region: str) -> bool:
@@ -66,16 +97,15 @@ def is_region_locked(region: str) -> bool:
 
 def lock_region(region: str) -> Dict:
     """
-    Lock a region chart.
-    Idempotent and safe.
-    Also updates index.json
+    Lock a region for the current chart week.
+    Idempotent, week-scoped, audited.
     """
     if region not in VALID_REGIONS:
-        raise ValueError("Invalid region")
+        raise ValueError(f"Invalid region: {region}")
 
     state = _load_state()
 
-    # Already locked → no-op
+    # Idempotent
     if state.get(region, {}).get("status") == "locked":
         return state[region]
 
@@ -87,10 +117,12 @@ def lock_region(region: str) -> Dict:
     state[region] = region_state
     _save_state(state)
 
-    _update_index(
+    _append_index(
         {
-            f"region_{region.lower()}": "locked",
-            f"region_{region.lower()}_locked_at": region_state["locked_at"],
+            "type": "region_lock",
+            "region": region,
+            "week_id": _get_week_id(),
+            "timestamp": region_state["locked_at"],
         }
     )
 
@@ -100,14 +132,16 @@ def lock_region(region: str) -> Dict:
 def unlock_region(region: str) -> Dict:
     """
     Unlock a region (admin/internal only).
-    Also updates index.json
+    Preserves audit history.
     """
     if region not in VALID_REGIONS:
-        raise ValueError("Invalid region")
+        raise ValueError(f"Invalid region: {region}")
 
     state = _load_state()
+    prev = state.get(region, {})
 
     region_state = {
+        **prev,
         "status": "unlocked",
         "unlocked_at": _now(),
     }
@@ -115,10 +149,12 @@ def unlock_region(region: str) -> Dict:
     state[region] = region_state
     _save_state(state)
 
-    _update_index(
+    _append_index(
         {
-            f"region_{region.lower()}": "unlocked",
-            f"region_{region.lower()}_unlocked_at": region_state["unlocked_at"],
+            "type": "region_unlock",
+            "region": region,
+            "week_id": _get_week_id(),
+            "timestamp": region_state["unlocked_at"],
         }
     )
 
@@ -126,19 +162,14 @@ def unlock_region(region: str) -> Dict:
 
 
 def any_region_locked() -> bool:
-    """
-    Returns True if any region is locked.
-    """
     state = _load_state()
     return any(
-        region_state.get("status") == "locked"
-        for region_state in state.values()
-        if isinstance(region_state, dict)
+        isinstance(v, dict) and v.get("status") == "locked"
+        for v in state.values()
     )
 
 
-def get_region_state(region: str) -> Dict | None:
-    """
-    Return raw region state.
-    """
+def get_region_state(region: str) -> Optional[Dict]:
+    if region not in VALID_REGIONS:
+        return None
     return _load_state().get(region)
