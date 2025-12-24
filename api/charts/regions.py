@@ -4,19 +4,33 @@ from fastapi import APIRouter, HTTPException
 
 from data.region_store import is_region_locked
 from data.region_snapshots import load_region_snapshot
+from data.chart_week import get_current_week_id
 
-# IMPORTANT: lazy import to avoid startup crash
+router = APIRouter()
+
+# Canonical regions (normalized)
+VALID_REGIONS = ("Eastern", "Northern", "Western")
+
+
+# -------------------------
+# Internal helpers
+# -------------------------
+
 def _load_items_safe():
+    """
+    Lazy import to avoid startup crashes.
+    Live data only.
+    """
     try:
         from data.store import load_items
         return load_items()
     except Exception:
         return []
 
-router = APIRouter()
 
-VALID_REGIONS = ["Eastern", "Northern", "Western"]
-
+# -------------------------
+# Public API
+# -------------------------
 
 @router.get(
     "/regions/{region}",
@@ -31,14 +45,17 @@ def get_region_chart(region: str):
             detail="Invalid region name",
         )
 
-    # 🔒 If region is locked, serve snapshot (if exists)
+    week_id = get_current_week_id()
+
+    # 🔒 Locked → serve immutable snapshot
     if is_region_locked(region):
         snapshot = load_region_snapshot(region)
 
-        # ✅ Graceful fallback if snapshot not created yet
+        # Snapshot not yet created (safe fallback)
         if snapshot is None:
             return {
                 "status": "ok",
+                "week_id": week_id,
                 "region": region,
                 "locked": True,
                 "snapshot_ready": False,
@@ -48,11 +65,12 @@ def get_region_chart(region: str):
 
         return {
             "status": "ok",
+            "week_id": snapshot.get("week_id", week_id),
             "region": region,
             "locked": True,
             "snapshot_ready": True,
-            "count": len(snapshot),
-            "items": snapshot,
+            "count": snapshot.get("count", 0),
+            "items": snapshot.get("items", []),
         }
 
     # 🔓 Live (unlocked) region chart
@@ -72,6 +90,7 @@ def get_region_chart(region: str):
 
     return {
         "status": "ok",
+        "week_id": week_id,
         "region": region,
         "locked": False,
         "count": len(top5),
