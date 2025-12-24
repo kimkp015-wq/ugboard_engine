@@ -1,28 +1,30 @@
-from fastapi import APIRouter, HTTPException
-import json
-import os
+from fastapi import APIRouter
+from data.top100_snapshot import load_top100_snapshot
+from data.store import load_items
 
 router = APIRouter()
 
-TOP100_PATH = "data/top100.json"
 
-
-@router.get("/top100")
+@router.get("/top100", summary="Get Top 100 songs")
 def get_top100():
-    if not os.path.exists(TOP100_PATH):
+    snapshot = load_top100_snapshot()
+
+    if snapshot:
         return {
             "status": "ok",
-            "count": 0,
-            "items": []
+            "locked": True,
+            "week_id": snapshot["week_id"],
+            "count": snapshot["count"],
+            "items": snapshot["items"],
         }
 
-    with open(TOP100_PATH, "r") as f:
-        data = json.load(f)
-
-    items = data.get("items", [])
+    # Fallback (live)
+    items = load_items()
+    items.sort(key=lambda x: x.get("score", 0), reverse=True)
 
     return {
         "status": "ok",
-        "count": len(items),
-        "items": items
+        "locked": False,
+        "count": len(items[:100]),
+        "items": items[:100],
     }

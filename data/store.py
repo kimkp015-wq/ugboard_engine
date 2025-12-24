@@ -1,13 +1,62 @@
-# data/store.py
 import json
 from pathlib import Path
 from typing import List, Dict, Optional
 
 from data.scoring import compute_score
+
+ITEMS_FILE = Path("data/items.json")
+
+
+# ------------------------
+# Internal helpers
+# ------------------------
+
+def _safe_read_json(path: Path):
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def _safe_write_json(path: Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    tmp.replace(path)
+
+
+# ------------------------
+# Public API
+# ------------------------
+
+def load_items() -> List[Dict]:
+    if not ITEMS_FILE.exists():
+        return []
+
+    data = _safe_read_json(ITEMS_FILE)
+    if not isinstance(data, list):
+        return []
+
+    cleaned: List[Dict] = []
+
+    for item in data:
+        if isinstance(item, dict) and "song_id" in item:
+            cleaned.append(item)
+
+    return cleaned
+
+
+def get_item_by_song_id(song_id: str) -> Optional[Dict]:
+    for item in load_items():
+        if item.get("song_id") == song_id:
+            return item
+    return None
+
+
 def upsert_item(new_item: Dict) -> Dict:
     """
-    Insert or update a song record using song_id as primary key.
-    Auto-recalculates score on every write.
+    Merge + recompute score.
+    This is the ONLY place score is calculated.
     """
 
     if not isinstance(new_item, dict):
@@ -34,3 +83,14 @@ def upsert_item(new_item: Dict) -> Dict:
 
     _safe_write_json(ITEMS_FILE, items)
     return new_item
+
+
+def delete_item(song_id: str) -> bool:
+    items = load_items()
+    filtered = [i for i in items if i.get("song_id") != song_id]
+
+    if len(filtered) == len(items):
+        return False
+
+    _safe_write_json(ITEMS_FILE, filtered)
+    return True

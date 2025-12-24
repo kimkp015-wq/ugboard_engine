@@ -74,3 +74,11 @@ def week_already_published(week_id: str) -> bool:
     """
     index = get_index()
     return week_id in index.get("weeks", [])
+    def week_already_published(week_id: str) -> bool:
+    """
+    Guard against double-publishing the same week.
+    """
+    for entry in _load_index():
+        if entry.get("week_id") == week_id:
+            return True
+    return False
