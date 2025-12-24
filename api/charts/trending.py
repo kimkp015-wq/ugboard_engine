@@ -4,8 +4,6 @@ import json
 from pathlib import Path
 from fastapi import APIRouter
 
-from data.chart_week import get_current_week_id
-
 router = APIRouter()
 
 # =========================
@@ -37,6 +35,18 @@ def _safe_read_trending():
         return []
 
 
+def _get_week_id_safe() -> str:
+    """
+    Defensive week id lookup.
+    Charts must NEVER crash on import.
+    """
+    try:
+        from data.chart_week import get_current_week_id
+        return get_current_week_id()
+    except Exception:
+        return "unknown-week"
+
+
 # =========================
 # Public API (READ-ONLY)
 # =========================
@@ -44,13 +54,14 @@ def _safe_read_trending():
 @router.get(
     "/trending",
     summary="Trending songs (live)",
+    tags=["Charts"],
 )
 def get_trending():
     """
     Live trending chart.
     Safe, read-only, week-aware.
     """
-    week_id = get_current_week_id()
+    week_id = _get_week_id_safe()
     items = _safe_read_trending()
 
     return {
