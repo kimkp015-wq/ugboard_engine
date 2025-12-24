@@ -2,7 +2,8 @@
 
 import json
 from pathlib import Path
-from typing import Dict, List
+from datetime import datetime
+from typing import Set
 
 INDEX_FILE = Path("data/index.json")
 
@@ -11,16 +12,17 @@ INDEX_FILE = Path("data/index.json")
 # Internal helpers
 # -------------------------
 
-def _safe_read():
+def _load_index() -> dict:
+    if not INDEX_FILE.exists():
+        return {"published_weeks": []}
+
     try:
-        if not INDEX_FILE.exists():
-            return None
         return json.loads(INDEX_FILE.read_text())
     except Exception:
-        return None
+        return {"published_weeks": []}
 
 
-def _safe_write(data) -> None:
+def _save_index(data: dict) -> None:
     INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = INDEX_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2))
@@ -28,57 +30,29 @@ def _safe_write(data) -> None:
 
 
 # -------------------------
-# Public READ API
-# -------------------------
-
-def get_index() -> Dict:
-    """
-    Public read-only index for charts.
-
-    Guarantees:
-    - Never crashes
-    - Always returns a dict
-    """
-    data = _safe_read()
-    if not isinstance(data, dict):
-        return {
-            "weeks": [],
-            "latest_week": None,
-        }
-    return data
-
-
-# -------------------------
-# Admin helpers
+# Public API
 # -------------------------
 
 def record_week_publish(week_id: str) -> None:
     """
-    Record a published chart week.
+    Record a successfully published chart week.
+    Idempotent.
     """
-    index = get_index()
+    index = _load_index()
+    weeks: Set[str] = set(index.get("published_weeks", []))
 
-    weeks: List[str] = index.get("weeks", [])
-    if week_id not in weeks:
-        weeks.append(week_id)
+    weeks.add(week_id)
 
-    index["weeks"] = weeks
-    index["latest_week"] = week_id
+    index["published_weeks"] = sorted(weeks)
+    index["last_published_at"] = datetime.utcnow().isoformat()
 
-    _safe_write(index)
+    _save_index(index)
 
 
 def week_already_published(week_id: str) -> bool:
     """
-    Idempotency guard for weekly publish.
+    Check if a chart week has already been published.
+    Used as idempotency guard.
     """
-    index = get_index()
-    return week_id in index.get("weeks", [])
-    def week_already_published(week_id: str) -> bool:
-    """
-    Guard against double-publishing the same week.
-    """
-    for entry in _load_index():
-        if entry.get("week_id") == week_id:
-            return True
-    return False
+    index = _load_index()
+    return week_id in index.get("published_weeks", [])
