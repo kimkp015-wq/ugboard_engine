@@ -1,6 +1,21 @@
 import json
 from pathlib import Path
 from typing import List, Dict
+from fastapi import APIRouter
+from typing import List, Dict
+
+router = APIRouter()
+
+@router.get(
+    "/top100",
+    summary="Uganda Top 100 (current week)",
+)
+def get_top100() -> List[Dict]:
+    """
+    Read-only Top 100 chart.
+    """
+    # TEMP placeholder until scoring + locking fully wired
+    return []
 
 LOCKED_DIR = Path("data/top100_locked")
 LIVE_FILE = Path("data/top100_live.json")
