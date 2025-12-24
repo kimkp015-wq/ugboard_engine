@@ -1,28 +1,61 @@
-from fastapi import APIRouter
+# api/charts/trending.py
+
 import json
-import os
+from pathlib import Path
+from fastapi import APIRouter
+
+from data.chart_week import get_current_week_id
 
 router = APIRouter()
 
-TRENDING_PATH = "data/trending.json"
+# =========================
+# Paths
+# =========================
+
+TRENDING_FILE = Path("data/trending.json")
 
 
-@router.get("/trending")
+# =========================
+# Internal helpers
+# =========================
+
+def _safe_read_trending():
+    """
+    Safe read for trending data.
+    Never raises, never crashes runtime.
+    """
+    if not TRENDING_FILE.exists():
+        return []
+
+    try:
+        data = json.loads(TRENDING_FILE.read_text())
+        if isinstance(data, dict):
+            items = data.get("items", [])
+            return items if isinstance(items, list) else []
+        return []
+    except Exception:
+        return []
+
+
+# =========================
+# Public API (READ-ONLY)
+# =========================
+
+@router.get(
+    "/trending",
+    summary="Trending songs (live)",
+)
 def get_trending():
-    if not os.path.exists(TRENDING_PATH):
-        return {
-            "status": "ok",
-            "count": 0,
-            "items": []
-        }
-
-    with open(TRENDING_PATH, "r") as f:
-        data = json.load(f)
-
-    items = data.get("items", [])
+    """
+    Live trending chart.
+    Safe, read-only, week-aware.
+    """
+    week_id = get_current_week_id()
+    items = _safe_read_trending()
 
     return {
         "status": "ok",
+        "week_id": week_id,
         "count": len(items),
-        "items": items
+        "items": items,
     }
