@@ -21,7 +21,7 @@ app = FastAPI(
 )
 
 # =========================
-# Root health check (PUBLIC)
+# Root health check
 # =========================
 
 @app.get("/", tags=["Health"])
@@ -40,6 +40,7 @@ def root():
 def _validate_engine_contracts() -> None:
     """
     Hard fail early if core engine contracts are missing.
+    Prevents silent runtime corruption.
     """
     import data.chart_week as chart_week
 
@@ -66,7 +67,6 @@ def _validate_engine_contracts() -> None:
                 f"Engine startup failed: data.index.{name} missing"
             )
 
-
 _validate_engine_contracts()
 
 # =========================
@@ -88,16 +88,17 @@ from api.ingestion.tv import router as tv_router
 from api.admin.publish import router as publish_router
 from api.admin.index import router as admin_index_router
 from api.admin.health import router as admin_health_router
+from api.admin.regions import router as admin_regions_router  # expected surface
 
 # =========================
 # Register routers
 # =========================
 
-# Charts
+# Charts (single source of truth)
 app.include_router(top100_router, prefix="/charts", tags=["Charts"])
 app.include_router(index_router, prefix="/charts", tags=["Charts"])
-app.include_router(regions_router, prefix="/charts", tags=["Regions"])
-app.include_router(trending_router, prefix="/charts", tags=["Trending"])
+app.include_router(regions_router, prefix="/charts", tags=["Charts"])
+app.include_router(trending_router, prefix="/charts", tags=["Charts"])
 
 # Ingestion
 app.include_router(youtube_router, prefix="/ingest", tags=["Ingestion"])
@@ -108,3 +109,4 @@ app.include_router(tv_router, prefix="/ingest", tags=["Ingestion"])
 app.include_router(publish_router, prefix="/admin", tags=["Admin"])
 app.include_router(admin_index_router, prefix="/admin", tags=["Admin"])
 app.include_router(admin_health_router, prefix="/admin", tags=["Health"])
+app.include_router(admin_regions_router, prefix="/admin", tags=["Admin"])
