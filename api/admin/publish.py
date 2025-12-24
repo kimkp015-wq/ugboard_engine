@@ -3,15 +3,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from data.permissions import ensure_admin_allowed
-from data.region_store import lock_region, is_region_locked
-from data.region_snapshots import save_region_snapshot
-from data.chart_week import (
-    get_current_week_id,
-    close_tracking_week,
-    open_new_tracking_week,
-)
-from data.scheduler_state import record_scheduler_run
-from data.index import record_week_publish, week_already_published
 
 router = APIRouter()
 
@@ -25,6 +16,34 @@ REGIONS = ("Eastern", "Northern", "Western")
 def publish_weekly(
     _: None = Depends(ensure_admin_allowed),
 ):
+    """
+    Weekly publish workflow (ADMIN).
+
+    Guarantees:
+    - Idempotent per week
+    - All-or-nothing region publish
+    - No startup-time import crashes
+    """
+
+    # -------------------------
+    # Lazy imports (CRITICAL)
+    # -------------------------
+    try:
+        from data.chart_week import (
+            get_current_week_id,
+            close_tracking_week,
+            open_new_tracking_week,
+        )
+        from data.region_store import lock_region, is_region_locked
+        from data.region_snapshots import save_region_snapshot
+        from data.index import record_week_publish, week_already_published
+        from data.scheduler_state import record_scheduler_run
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Engine publish dependencies unavailable: {str(e)}",
+        )
+
     # -------------------------
     # Resolve current week
     # -------------------------
@@ -54,7 +73,7 @@ def publish_weekly(
             lock_region(region)
             published_regions.append(region)
         except Exception as e:
-            # HARD FAIL -- do NOT rotate week
+            # HARD FAIL -- no rotation, no index write
             raise HTTPException(
                 status_code=500,
                 detail=f"Publishing failed for {region}: {str(e)}",
