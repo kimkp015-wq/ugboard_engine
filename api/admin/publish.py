@@ -5,7 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from data.permissions import ensure_admin_allowed
 from data.region_store import lock_region, is_region_locked
 from data.region_snapshots import save_region_snapshot
-from data.chart_week import close_tracking_week, open_new_tracking_week
+from data.chart_week import (
+    get_current_week_id,
+    close_tracking_week,
+    open_new_tracking_week,
+)
 from data.scheduler_state import record_scheduler_run
 from data.index import record_week_publish, week_already_published
 
@@ -21,9 +25,26 @@ REGIONS = ("Eastern", "Northern", "Western")
 def publish_weekly(
     _: None = Depends(ensure_admin_allowed),
 ):
+    # -------------------------
+    # Resolve current week
+    # -------------------------
+    week_id = get_current_week_id()
+
+    # -------------------------
+    # Idempotency guard
+    # -------------------------
+    if week_already_published(week_id):
+        return {
+            "status": "skipped",
+            "reason": "week already published",
+            "week_id": week_id,
+        }
+
     published = []
 
-    # 1️⃣ Snapshot + lock each region (idempotent)
+    # -------------------------
+    # Snapshot + lock regions
+    # -------------------------
     for region in REGIONS:
         if is_region_locked(region):
             continue
@@ -38,24 +59,33 @@ def publish_weekly(
                 detail=f"Failed publishing {region}: {str(e)}",
             )
 
-    # 2️⃣ If nothing new was published, stop safely
+    # -------------------------
+    # Nothing new → safe exit
+    # -------------------------
     if not published:
         return {
             "status": "ok",
             "published_regions": [],
             "week_rotated": False,
             "message": "All regions already published",
+            "week_id": week_id,
         }
 
-    # 3️⃣ Rotate chart week
+    # -------------------------
+    # Rotate chart week
+    # -------------------------
     close_tracking_week()
     open_new_tracking_week()
 
-    # 4️⃣ Record admin run
+    # -------------------------
+    # Record publish + admin run
+    # -------------------------
+    record_week_publish(week_id)
     record_scheduler_run()
 
     return {
         "status": "ok",
         "published_regions": published,
         "week_rotated": True,
+        "week_id": week_id,
     }
