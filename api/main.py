@@ -29,7 +29,6 @@ def root():
 
 # =========================
 # Import routers AFTER app exists
-# (prevents circular imports)
 # =========================
 
 # Health
@@ -38,8 +37,9 @@ from api.admin.health import router as health_router
 # Admin (MANUAL / HUMAN-triggered)
 from api.admin.alerts import router as alerts_router
 from api.admin.publish import router as publish_router
+from api.admin.index import router as index_router   # ✅ ADDED
 
-# Internal (system / cron)
+# Internal (SYSTEM / CRON)
 from api.admin.internal import router as internal_router
 from api.admin.weekly import router as weekly_router
 
@@ -110,6 +110,12 @@ app.include_router(
 
 app.include_router(
     publish_router,
+    prefix="/admin",
+    tags=["Admin"],
+)
+
+app.include_router(
+    index_router,          # ✅ ADDED
     prefix="/admin",
     tags=["Admin"],
 )
