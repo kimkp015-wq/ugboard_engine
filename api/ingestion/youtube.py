@@ -1,7 +1,10 @@
+# api/ingestion/youtube.py
+
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Dict
 
 from data.permissions import ensure_injection_allowed
+from data.store import upsert_item
 
 router = APIRouter()
 
@@ -17,12 +20,16 @@ def ingest_youtube(
     _: None = Depends(ensure_injection_allowed),
 ):
     """
-    Accepts validated YouTube ingestion payload.
-    Does NOT write to store yet.
+    Ingest YouTube data.
+
+    Guarantees:
+    - song_id is primary key
+    - Idempotent (safe to resend)
+    - Auth required (Swagger popup enabled)
     """
 
     # -------------------------
-    # Basic structure check
+    # Payload structure
     # -------------------------
     if not isinstance(payload, dict):
         raise HTTPException(
@@ -55,7 +62,7 @@ def ingest_youtube(
             )
 
     # -------------------------
-    # Region validation
+    # Normalize & validate region
     # -------------------------
     region = payload["region"].title()
     if region not in VALID_REGIONS:
@@ -74,12 +81,34 @@ def ingest_youtube(
         )
 
     # -------------------------
-    # ACCEPTED (no persistence yet)
+    # Build canonical item
     # -------------------------
+    item = {
+        "song_id": payload["song_id"],
+        "title": payload["title"],
+        "artist": payload["artist"],
+        "region": region,
+        "youtube_views": payload["views"],
+        # score placeholder (future engine logic)
+        "score": payload["views"],
+        "source": "youtube",
+    }
+
+    # -------------------------
+    # Persist (UPSERT)
+    # -------------------------
+    try:
+        upsert_item(item)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
+
     return {
         "status": "ok",
         "source": "youtube",
-        "accepted": True,
-        "song_id": payload["song_id"],
+        "stored": True,
+        "song_id": item["song_id"],
         "region": region,
     }
