@@ -7,10 +7,14 @@ from data.index import get_index
 
 router = APIRouter()
 
+# =========================
+# Admin index (audit)
+# =========================
 
 @router.get(
     "/index",
     summary="(Admin) Read-only weekly publish index",
+    tags=["Admin"],
 )
 def read_index(
     _: None = Depends(ensure_admin_allowed),
@@ -24,9 +28,10 @@ def read_index(
     - Snapshot paths
     - Trigger source
     """
+    entries = get_index()
 
     return {
         "status": "ok",
-        "count": len(get_index()),
-        "entries": get_index(),
+        "count": len(entries),
+        "entries": entries,
     }
