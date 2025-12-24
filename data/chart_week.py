@@ -83,7 +83,6 @@ def close_tracking_week() -> Dict:
         return state
 
     if not state:
-        # No active week yet → initialize then close
         week_id = get_current_week_id()
         state = {
             "week_id": week_id,
@@ -105,8 +104,6 @@ def open_new_tracking_week() -> Dict:
     Advances calendar week safely.
     """
     now = datetime.now(EAT)
-
-    # Advance by 7 days to guarantee next ISO week
     next_week_dt = now + timedelta(days=7)
     week_id = _compute_week_id(next_week_dt)
 
