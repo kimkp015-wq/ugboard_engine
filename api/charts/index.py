@@ -1,28 +1,50 @@
-# api/charts/index.py
+from pathlib import Path
+import json
+from typing import Dict, List
 
-from fastapi import APIRouter
-from data.index import get_index
-
-router = APIRouter()
+INDEX_FILE = Path("data/index.json")
 
 
-@router.get(
-    "/index",
-    summary="Get published chart history (immutable index)",
-)
-def get_chart_index():
+def _safe_read() -> List[Dict]:
+    if not INDEX_FILE.exists():
+        return []
+    try:
+        return json.loads(INDEX_FILE.read_text())
+    except Exception:
+        return []
+
+
+def _safe_write(data: List[Dict]) -> None:
+    INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = INDEX_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    tmp.replace(INDEX_FILE)
+
+
+def record_week_publish(week_id: str) -> None:
     """
-    Public, read-only endpoint.
-
-    Returns:
-    - All published chart weeks
-    - Source of truth for chart releases
+    Record a published chart week.
+    Idempotent-safe (caller guards duplicates).
     """
+    index = _safe_read()
+    index.append(
+        {
+            "week_id": week_id,
+        }
+    )
+    _safe_write(index)
 
-    index = get_index()
 
-    return {
-        "status": "ok",
-        "count": len(index),
-        "weeks": index,
-    }
+def week_already_published(week_id: str) -> bool:
+    """
+    Check if a chart week has already been published.
+    """
+    index = _safe_read()
+    return any(entry.get("week_id") == week_id for entry in index)
+
+
+def get_index() -> List[Dict]:
+    """
+    Public read-only index for charts.
+    """
+    return _safe_read()
