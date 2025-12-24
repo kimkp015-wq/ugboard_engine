@@ -24,6 +24,7 @@ def ingest_tv(
     - song_id is primary key
     - Idempotent (safe to resend)
     - TV appearances merged into existing item
+    - Score recalculated centrally
     """
 
     # -------------------------
@@ -98,7 +99,7 @@ def ingest_tv(
             )
 
     # -------------------------
-    # Build canonical item
+    # Canonical merge payload
     # -------------------------
     item = {
         "song_id": payload["song_id"],
@@ -107,9 +108,6 @@ def ingest_tv(
         "region": region,
         "tv_appearances": payload["appearances"],
         "tv_channels": channels,
-        # Temporary scoring (merged later)
-        "score": payload["appearances"],
-        "source": "tv",
     }
 
     # -------------------------
