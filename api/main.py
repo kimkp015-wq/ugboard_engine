@@ -37,7 +37,6 @@ from api.admin.health import router as health_router
 # Admin (MANUAL / HUMAN-triggered)
 from api.admin.alerts import router as alerts_router
 from api.admin.publish import router as publish_router
-from api.admin.index import router as index_router   # ✅ ADDED
 
 # Internal (SYSTEM / CRON)
 from api.admin.internal import router as internal_router
@@ -47,6 +46,7 @@ from api.admin.weekly import router as weekly_router
 from api.charts.top100 import router as top100_router
 from api.charts.trending import router as trending_router
 from api.charts.regions import router as regions_router
+from api.charts.index import router as index_router   # ✅ CORRECT LOCATION
 
 # Ingestion (WRITE / INPUT)
 from api.ingestion.youtube import router as youtube_router
@@ -63,7 +63,10 @@ app.include_router(
     tags=["Health"],
 )
 
-# Charts
+# =========================
+# Charts (PUBLIC / READ-ONLY)
+# =========================
+
 app.include_router(
     top100_router,
     prefix="/charts",
@@ -82,7 +85,16 @@ app.include_router(
     tags=["Charts"],
 )
 
-# Ingestion (INPUT endpoints)
+app.include_router(
+    index_router,
+    prefix="/charts",
+    tags=["Charts"],
+)
+
+# =========================
+# Ingestion (INPUT / TOKEN)
+# =========================
+
 app.include_router(
     youtube_router,
     prefix="/ingest",
@@ -101,7 +113,10 @@ app.include_router(
     tags=["Ingestion"],
 )
 
+# =========================
 # Admin (HUMAN)
+# =========================
+
 app.include_router(
     alerts_router,
     prefix="/admin",
@@ -114,13 +129,10 @@ app.include_router(
     tags=["Admin"],
 )
 
-app.include_router(
-    index_router,          # ✅ ADDED
-    prefix="/admin",
-    tags=["Admin"],
-)
-
+# =========================
 # Internal (SYSTEM / CRON)
+# =========================
+
 app.include_router(
     internal_router,
     prefix="/internal",
