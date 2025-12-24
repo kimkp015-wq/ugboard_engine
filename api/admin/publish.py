@@ -7,6 +7,7 @@ from data.region_store import lock_region, is_region_locked
 from data.region_snapshots import save_region_snapshot
 from data.chart_week import close_tracking_week, open_new_tracking_week
 from data.scheduler_state import record_scheduler_run
+from data.index import record_week_publish, week_already_published
 
 router = APIRouter()
 

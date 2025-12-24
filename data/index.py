@@ -87,3 +87,19 @@ def get_index() -> List[Dict]:
     Read-only access to the full publish history.
     """
     return _load_index()
+    def week_already_published(week_id: str) -> bool:
+    """
+    Idempotency guard.
+    Returns True if this week_id already exists in the index.
+    Never raises.
+    """
+    try:
+        entries = _load_index()
+        return any(
+            isinstance(e, dict) and e.get("week_id") == week_id
+            for e in entries
+        )
+    except Exception:
+        return False
+    
+    
