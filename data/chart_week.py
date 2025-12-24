@@ -1,7 +1,7 @@
 # data/chart_week.py
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from typing import Dict
@@ -20,7 +20,8 @@ def _now() -> str:
 
 def _load_state() -> Dict:
     """
-    Load week state safely. Never raises.
+    Load chart week state safely.
+    Never raises, never crashes boot.
     """
     if not STATE_FILE.exists():
         return {}
@@ -34,52 +35,65 @@ def _load_state() -> Dict:
 
 def _save_state(state: Dict) -> None:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2))
+    tmp.replace(STATE_FILE)
+
+
+def _compute_week_id(dt: datetime) -> str:
+    year, week, _ = dt.isocalendar()
+    return f"{year}-W{week:02d}"
 
 
 # =========================
-# Public API (engine contracts)
+# Public API (ENGINE CONTRACT)
 # =========================
 
 def get_current_week_id() -> str:
     """
-    Canonical week ID generator.
-    Always returns a string like "2025-W52".
+    Return the currently active chart week ID.
+    Falls back to calendar week if state is missing.
     """
     state = _load_state()
     week_id = state.get("week_id")
+
     if isinstance(week_id, str) and week_id:
         return week_id
 
-    # If no week stored, generate from current date
-    now = datetime.now(EAT)
-    year, week, _ = now.isocalendar()
-    return f"{year}-W{week:02d}"
+    return _compute_week_id(datetime.now(EAT))
 
 
 def current_chart_week() -> Dict:
     """
-    Returns the full stored week state if present,
-    or a minimal object if not yet initialized.
+    Return the full current chart week state.
+    Safe for reads by snapshots, charts, admin.
     """
     state = _load_state()
-    if not isinstance(state, dict):
-        return {}
-    return state
+    return state if isinstance(state, dict) else {}
 
 
 def close_tracking_week() -> Dict:
     """
-    Mark the current week as closed.
-    Idempotent: if already closed, does nothing.
+    Close the current tracking week.
+    Idempotent: safe to call multiple times.
     """
     state = _load_state()
 
     if state.get("status") == "closed":
         return state
 
-    state["status"] = "closed"
-    state["closed_at"] = _now()
+    if not state:
+        # No active week yet → initialize then close
+        week_id = get_current_week_id()
+        state = {
+            "week_id": week_id,
+            "status": "closed",
+            "opened_at": None,
+            "closed_at": _now(),
+        }
+    else:
+        state["status"] = "closed"
+        state["closed_at"] = _now()
 
     _save_state(state)
     return state
@@ -87,14 +101,33 @@ def close_tracking_week() -> Dict:
 
 def open_new_tracking_week() -> Dict:
     """
-    Create a new tracking week and return its state.
-    Overwrites previous state safely.
+    Open a brand-new tracking week.
+    Advances calendar week safely.
     """
+    now = datetime.now(EAT)
+
+    # Advance by 7 days to guarantee next ISO week
+    next_week_dt = now + timedelta(days=7)
+    week_id = _compute_week_id(next_week_dt)
+
     state = {
-        "week_id": get_current_week_id(),
+        "week_id": week_id,
         "status": "open",
         "opened_at": _now(),
+        "closed_at": None,
     }
 
     _save_state(state)
     return state
+
+
+# =========================
+# Explicit exports (prevents ImportError)
+# =========================
+
+__all__ = [
+    "get_current_week_id",
+    "current_chart_week",
+    "close_tracking_week",
+    "open_new_tracking_week",
+]
