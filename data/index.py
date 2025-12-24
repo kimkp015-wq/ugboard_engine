@@ -2,26 +2,25 @@
 
 import json
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
-INDEX_FILE = Path("data/week_index.json")
+INDEX_FILE = Path("data/index.json")
 
 
 # -------------------------
 # Internal helpers
 # -------------------------
 
-def _safe_read() -> Dict:
-    if not INDEX_FILE.exists():
-        return {}
-
+def _safe_read():
     try:
+        if not INDEX_FILE.exists():
+            return None
         return json.loads(INDEX_FILE.read_text())
     except Exception:
-        return {}
+        return None
 
 
-def _safe_write(data: Dict) -> None:
+def _safe_write(data) -> None:
     INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = INDEX_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2))
@@ -29,23 +28,49 @@ def _safe_write(data: Dict) -> None:
 
 
 # -------------------------
-# Public API
+# Public READ API
 # -------------------------
 
-def week_already_published(week_id: str) -> bool:
+def get_index() -> Dict:
     """
-    Returns True if this week was already published.
-    Never raises.
-    """
-    index = _safe_read()
-    return index.get(week_id) is True
+    Public read-only index for charts.
 
+    Guarantees:
+    - Never crashes
+    - Always returns a dict
+    """
+    data = _safe_read()
+    if not isinstance(data, dict):
+        return {
+            "weeks": [],
+            "latest_week": None,
+        }
+    return data
+
+
+# -------------------------
+# Admin helpers
+# -------------------------
 
 def record_week_publish(week_id: str) -> None:
     """
-    Records that a chart week has been published.
-    Idempotent and safe.
+    Record a published chart week.
     """
-    index = _safe_read()
-    index[week_id] = True
+    index = get_index()
+
+    weeks: List[str] = index.get("weeks", [])
+    if week_id not in weeks:
+        weeks.append(week_id)
+
+    index["weeks"] = weeks
+    index["latest_week"] = week_id
+
     _safe_write(index)
+
+
+def week_already_published(week_id: str) -> bool:
+    """
+    Idempotency guard for weekly publish.
+    """
+    index = get_index()
+    return week_id in index.get("weeks", [])
