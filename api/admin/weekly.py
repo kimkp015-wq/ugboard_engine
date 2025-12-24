@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from data.permissions import ensure_internal_allowed
 from data.chart_week import close_tracking_week, open_new_tracking_week
 from data.region_store import lock_region
+from data.region_snapshots import save_region_snapshot
 from data.scheduler_state import record_scheduler_run
 
 router = APIRouter()
@@ -24,25 +25,28 @@ def run_weekly(
     - Cloudflare Workers cron
     - Trusted internal scheduler
 
-    Safe guarantees:
+    Guarantees:
+    - Snapshots are created BEFORE locking
     - Idempotent region locking
     - Safe week rotation
-    - Auditable via index.json
+    - Fully auditable
     """
 
-    # 1️⃣ Lock all regions (idempotent)
     published_regions = []
+
+    # 1️⃣ Snapshot + lock all regions
     for region in ("Eastern", "Northern", "Western"):
+        save_region_snapshot(region)   # ✅ REQUIRED
         lock_region(region)
         published_regions.append(region)
 
-    # 2️⃣ Close current tracking week (safe if already closed)
+    # 2️⃣ Close current tracking week
     close_tracking_week()
 
     # 3️⃣ Open a new tracking week
     week = open_new_tracking_week()
 
-    # 4️⃣ Record scheduler run (Cloudflare cron)
+    # 4️⃣ Record scheduler run
     scheduler_state = record_scheduler_run(
         trigger="cloudflare_worker"
     )
