@@ -40,7 +40,7 @@ def publish_weekly(
             "week_id": week_id,
         }
 
-    published = []
+    published_regions: list[str] = []
 
     # -------------------------
     # Snapshot + lock regions
@@ -52,17 +52,18 @@ def publish_weekly(
         try:
             save_region_snapshot(region)
             lock_region(region)
-            published.append(region)
+            published_regions.append(region)
         except Exception as e:
+            # HARD FAIL -- do NOT rotate week
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed publishing {region}: {str(e)}",
+                detail=f"Publishing failed for {region}: {str(e)}",
             )
 
     # -------------------------
     # Nothing new → safe exit
     # -------------------------
-    if not published:
+    if not published_regions:
         return {
             "status": "ok",
             "published_regions": [],
@@ -72,20 +73,28 @@ def publish_weekly(
         }
 
     # -------------------------
+    # Record immutable publish FIRST
+    # -------------------------
+    record_week_publish(
+        week_id=week_id,
+        regions=published_regions,
+        trigger="admin",
+    )
+
+    # -------------------------
     # Rotate chart week
     # -------------------------
     close_tracking_week()
     open_new_tracking_week()
 
     # -------------------------
-    # Record publish + admin run
+    # Record admin/scheduler run
     # -------------------------
-    record_week_publish(week_id)
     record_scheduler_run()
 
     return {
         "status": "ok",
-        "published_regions": published,
+        "published_regions": published_regions,
         "week_rotated": True,
         "week_id": week_id,
     }
