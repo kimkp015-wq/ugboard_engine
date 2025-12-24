@@ -1,10 +1,23 @@
+# api/charts/top100.py
+
 import json
 from pathlib import Path
 from typing import List, Dict
+
 from fastapi import APIRouter
-from typing import List, Dict
 
 router = APIRouter()
+
+# =========================
+# Paths
+# =========================
+
+LOCKED_DIR = Path("data/top100_locked")
+LIVE_FILE = Path("data/top100_live.json")
+
+# =========================
+# Public API (READ-ONLY)
+# =========================
 
 @router.get(
     "/top100",
@@ -13,13 +26,16 @@ router = APIRouter()
 def get_top100() -> List[Dict]:
     """
     Read-only Top 100 chart.
+
+    NOTE:
+    - Will return locked data once week publishing is wired
+    - Currently returns empty list safely
     """
-    # TEMP placeholder until scoring + locking fully wired
     return []
 
-LOCKED_DIR = Path("data/top100_locked")
-LIVE_FILE = Path("data/top100_live.json")
-
+# =========================
+# Internal helpers
+# =========================
 
 def _safe_read(path: Path):
     try:
@@ -34,6 +50,9 @@ def _safe_write(path: Path, data) -> None:
     tmp.write_text(json.dumps(data, indent=2))
     tmp.replace(path)
 
+# =========================
+# Locking logic (ADMIN)
+# =========================
 
 def lock_top100(week_id: str) -> None:
     """
