@@ -31,25 +31,31 @@ def get_region_chart(region: str):
             detail="Invalid region name",
         )
 
-    # If region is locked, serve snapshot
+    # 🔒 If region is locked, serve snapshot (if exists)
     if is_region_locked(region):
         snapshot = load_region_snapshot(region)
 
+        # ✅ Graceful fallback if snapshot not created yet
         if snapshot is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Region snapshot not found",
-            )
+            return {
+                "status": "ok",
+                "region": region,
+                "locked": True,
+                "snapshot_ready": False,
+                "count": 0,
+                "items": [],
+            }
 
         return {
             "status": "ok",
             "region": region,
             "locked": True,
+            "snapshot_ready": True,
             "count": len(snapshot),
             "items": snapshot,
         }
 
-    # Otherwise return live Top 5
+    # 🔓 Live (unlocked) region chart
     items = _load_items_safe()
 
     region_items = [
