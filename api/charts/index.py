@@ -1,15 +1,30 @@
+# data/index.py
+
 from pathlib import Path
 import json
 from typing import Dict, List
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 INDEX_FILE = Path("data/index.json")
+EAT = ZoneInfo("Africa/Kampala")
+
+
+# -------------------------
+# Internal helpers
+# -------------------------
+
+def _now() -> str:
+    return datetime.now(EAT).isoformat()
 
 
 def _safe_read() -> List[Dict]:
     if not INDEX_FILE.exists():
         return []
+
     try:
-        return json.loads(INDEX_FILE.read_text())
+        data = json.loads(INDEX_FILE.read_text())
+        return data if isinstance(data, list) else []
     except Exception:
         return []
 
@@ -21,30 +36,52 @@ def _safe_write(data: List[Dict]) -> None:
     tmp.replace(INDEX_FILE)
 
 
-def record_week_publish(week_id: str) -> None:
+# -------------------------
+# Public API
+# -------------------------
+
+def record_week_publish(
+    *,
+    week_id: str,
+    regions: List[str] | None = None,
+    trigger: str | None = None,
+) -> Dict:
     """
-    Record a published chart week.
-    Idempotent-safe (caller guards duplicates).
+    Append an immutable publish record.
+    Safe to call once per week.
     """
+
     index = _safe_read()
-    index.append(
-        {
-            "week_id": week_id,
-        }
-    )
+
+    record = {
+        "week_id": week_id,
+        "published_at": _now(),
+    }
+
+    if regions:
+        record["regions"] = regions
+
+    if trigger:
+        record["trigger"] = trigger
+
+    index.append(record)
     _safe_write(index)
+
+    return record
 
 
 def week_already_published(week_id: str) -> bool:
     """
-    Check if a chart week has already been published.
+    Idempotency guard.
     """
-    index = _safe_read()
-    return any(entry.get("week_id") == week_id for entry in index)
+    return any(
+        entry.get("week_id") == week_id
+        for entry in _safe_read()
+    )
 
 
 def get_index() -> List[Dict]:
     """
-    Public read-only index for charts.
+    Read-only public index.
     """
     return _safe_read()
