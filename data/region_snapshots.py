@@ -1,45 +1,45 @@
-# data/region_snapshots.py
-
 import json
 from pathlib import Path
 from typing import Dict, Optional
 
 from data.chart_week import current_chart_week
-from data.store import load_items
 
 SNAPSHOT_DIR = Path("data/region_snapshots")
 VALID_REGIONS = ("Eastern", "Northern", "Western")
 
 
 # -------------------------
-# Helpers
+# Internal helpers
 # -------------------------
 
 def _get_week_id() -> str:
-    """
-    Always return a usable week_id.
-    Never returns None.
-    """
-    week = current_chart_week() or {}
-    return week.get("week_id") or "untracked-week"
+    week = current_chart_week()
+    return week.get("week_id", "unknown-week")
 
 
 def _snapshot_path(region: str, week_id: str) -> Path:
     return SNAPSHOT_DIR / week_id / f"{region.lower()}.json"
 
 
+def _load_items_safe():
+    """
+    Lazy import to prevent startup crashes.
+    """
+    try:
+        from data.store import load_items
+        return load_items()
+    except Exception:
+        return []
+
+
 # -------------------------
-# Write snapshot
+# Public API
 # -------------------------
 
 def save_region_snapshot(region: str) -> Dict:
     """
     Save Top 5 snapshot for a region for the current chart week.
-
-    Guarantees:
-    - Week-aware
-    - Idempotent
-    - Safe if no items exist
+    Safe, deterministic, week-aware.
     """
     if region not in VALID_REGIONS:
         raise ValueError("Invalid region")
@@ -48,7 +48,7 @@ def save_region_snapshot(region: str) -> Dict:
     path = _snapshot_path(region, week_id)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    items = load_items() or []
+    items = _load_items_safe()
 
     region_items = [
         i for i in items
@@ -57,7 +57,7 @@ def save_region_snapshot(region: str) -> Dict:
 
     region_items.sort(
         key=lambda x: x.get("score", 0),
-        reverse=True,
+        reverse=True
     )
 
     snapshot_items = region_items[:5]
@@ -73,16 +73,10 @@ def save_region_snapshot(region: str) -> Dict:
     return payload
 
 
-# -------------------------
-# Read snapshot
-# -------------------------
-
 def load_region_snapshot(region: str) -> Optional[Dict]:
     """
     Load snapshot for current chart week.
-
-    Never crashes.
-    Returns None only if snapshot truly does not exist.
+    Returns None if not found.
     """
     if region not in VALID_REGIONS:
         return None
