@@ -89,7 +89,7 @@ def upsert_item(new_item: Dict) -> Dict:
         raise ValueError("Missing required field: song_id")
 
     items = load_items()
-    updated indicate = False
+    updated_indicator = False
 
     for idx, item in enumerate(items):
         if item.get("song_id") == song_id:
