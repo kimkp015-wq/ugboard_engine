@@ -2,75 +2,70 @@
 
 import json
 from pathlib import Path
-from datetime import datetime
-from zoneinfo import ZoneInfo
-from typing import List, Dict
-
+from typing import List, Dict, Optional
+from data.chart_week import current_chart_week
 from data.store import load_items
-
-EAT = ZoneInfo("Africa/Kampala")
 
 SNAPSHOT_DIR = Path("data/region_snapshots")
 VALID_REGIONS = ("Eastern", "Northern", "Western")
 
 
-def _now() -> str:
-    return datetime.now(EAT).isoformat()
+def _get_week_id() -> str:
+    week = current_chart_week()
+    return week.get("week_id", "unknown-week")
 
 
-def _snapshot_path(region: str) -> Path:
-    return SNAPSHOT_DIR / f"{region.lower()}.json"
+def _snapshot_path(region: str, week_id: str) -> Path:
+    return SNAPSHOT_DIR / week_id / f"{region.lower()}.json"
 
 
 def save_region_snapshot(region: str) -> Dict:
     """
-    Generate and persist Top 5 snapshot for a region.
-    Atomic and auditable.
+    Save Top 5 snapshot for a region for the current chart week.
+    Safe, deterministic, week-aware.
     """
     if region not in VALID_REGIONS:
         raise ValueError("Invalid region")
 
-    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    week_id = _get_week_id()
+    path = _snapshot_path(region, week_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
 
-    items = load_items() or []
-
-    region_items: List[Dict] = [
-        i for i in items if i.get("region") == region
+    items = load_items()
+    region_items = [
+        i for i in items
+        if i.get("region") == region
     ]
 
     region_items.sort(
         key=lambda x: x.get("score", 0),
-        reverse=True,
+        reverse=True
     )
 
-    top_items = region_items[:5]
+    snapshot = region_items[:5]
 
-    snapshot = {
+    payload = {
+        "week_id": week_id,
         "region": region,
-        "generated_at": _now(),
-        "count": len(top_items),
-        "items": top_items,
+        "count": len(snapshot),
+        "items": snapshot,
     }
 
-    # Atomic write
-    tmp_path = _snapshot_path(region).with_suffix(".json.tmp")
-    final_path = _snapshot_path(region)
-
-    tmp_path.write_text(json.dumps(snapshot, indent=2))
-    tmp_path.replace(final_path)
-
-    return snapshot
+    path.write_text(json.dumps(payload, indent=2))
+    return payload
 
 
-def load_region_snapshot(region: str) -> Dict | None:
+def load_region_snapshot(region: str) -> Optional[Dict]:
     """
-    Load persisted region snapshot.
-    Safe read.
+    Load snapshot for current chart week.
+    Returns None if not found.
     """
     if region not in VALID_REGIONS:
         return None
 
-    path = _snapshot_path(region)
+    week_id = _get_week_id()
+    path = _snapshot_path(region, week_id)
+
     if not path.exists():
         return None
 

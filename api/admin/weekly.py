@@ -7,53 +7,60 @@ from data.chart_week import close_tracking_week, open_new_tracking_week
 from data.region_store import lock_region
 from data.region_snapshots import save_region_snapshot
 from data.scheduler_state import record_scheduler_run
+from data.index import record_week_publish
 
 router = APIRouter()
+
+REGIONS = ("Eastern", "Northern", "Western")
 
 
 @router.post(
     "/weekly-run",
-    summary="(Internal) Weekly publish and rotate chart week",
+    summary="(Internal) Weekly publish, snapshot regions, rotate chart week",
 )
 def run_weekly(
     _: None = Depends(ensure_internal_allowed),
 ):
     """
-    Internal-only endpoint.
-
-    Designed to be called by:
-    - Cloudflare Workers cron
-    - Trusted internal scheduler
+    Cloudflare-cron-safe weekly rotation.
 
     Guarantees:
-    - Snapshots are created BEFORE locking
-    - Idempotent region locking
-    - Safe week rotation
-    - Fully auditable
+    - Snapshots written
+    - Regions locked
+    - Week rotated
+    - Index appended (immutable)
     """
 
-    published_regions = []
+    published = []
 
-    # 1️⃣ Snapshot + lock all regions
-    for region in ("Eastern", "Northern", "Western"):
-        save_region_snapshot(region)   # ✅ REQUIRED
+    # 1️⃣ Snapshot + lock
+    for region in REGIONS:
+        save_region_snapshot(region)
         lock_region(region)
-        published_regions.append(region)
+        published.append(region)
 
-    # 2️⃣ Close current tracking week
+    # 2️⃣ Close current week
     close_tracking_week()
 
-    # 3️⃣ Open a new tracking week
+    # 3️⃣ Open new week
     week = open_new_tracking_week()
 
-    # 4️⃣ Record scheduler run
-    scheduler_state = record_scheduler_run(
+    # 4️⃣ Scheduler state
+    scheduler = record_scheduler_run(
         trigger="cloudflare_worker"
+    )
+
+    # 5️⃣ Index record (SOURCE OF TRUTH)
+    index_entry = record_week_publish(
+        week_id=week["week_id"],
+        regions=published,
+        trigger="cloudflare_worker",
     )
 
     return {
         "status": "ok",
-        "published_regions": published_regions,
-        "week": week,
-        "scheduler": scheduler_state,
+        "published_regions": published,
+        "new_week": week,
+        "scheduler": scheduler,
+        "index": index_entry,
     }

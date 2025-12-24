@@ -4,53 +4,61 @@ import json
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from typing import Dict, List
 
 EAT = ZoneInfo("Africa/Kampala")
 INDEX_FILE = Path("data/index.json")
 
 
-def _load() -> dict:
+def _now() -> str:
+    return datetime.now(EAT).isoformat()
+
+
+def _load_index() -> List[Dict]:
     if not INDEX_FILE.exists():
-        return {}
+        return []
+
     try:
         return json.loads(INDEX_FILE.read_text())
     except Exception:
-        return {}
+        # Corrupt index should never crash engine
+        return []
 
 
-def _save(state: dict) -> None:
+def _save_index(entries: List[Dict]) -> None:
     INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
-    INDEX_FILE.write_text(json.dumps(state, indent=2))
+    INDEX_FILE.write_text(json.dumps(entries, indent=2))
 
 
-# -------------------------
-# CHART WEEK
-# -------------------------
-def update_chart_week(**updates):
-    state = _load()
-    state.setdefault("chart_week", {})
-    state["chart_week"].update(updates)
-    _save(state)
+def record_week_publish(
+    *,
+    week_id: str,
+    regions: List[str],
+    trigger: str,
+) -> Dict:
+    """
+    Append an immutable publish record.
+    Never mutates previous entries.
+    """
+
+    entries = _load_index()
+
+    record = {
+        "week_id": week_id,
+        "regions": regions,
+        "trigger": trigger,
+        "published_at": _now(),
+        "snapshots_path": f"data/region_snapshots/{week_id}/",
+    }
+
+    entries.append(record)
+    _save_index(entries)
+
+    return record
 
 
-# -------------------------
-# REGIONS
-# -------------------------
-def lock_region(region: str):
-    state = _load()
-    state.setdefault("regions", {})
-    state["regions"].setdefault(region, {})
-    state["regions"][region]["locked"] = True
-    state["regions"][region]["last_snapshot"] = datetime.now(EAT).isoformat()
-    _save(state)
-
-
-# -------------------------
-# SCHEDULER
-# -------------------------
-def record_scheduler(source: str):
-    state = _load()
-    state.setdefault("scheduler", {})
-    state["scheduler"]["last_run"] = datetime.now(EAT).isoformat()
-    state["scheduler"]["source"] = source
-    _save(state)
+def get_index() -> List[Dict]:
+    """
+    Read-only access to index.
+    """
+    return _load_index()
