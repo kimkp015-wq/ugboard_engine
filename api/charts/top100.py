@@ -6,6 +6,8 @@ from typing import List, Dict
 
 from fastapi import APIRouter
 
+from data.chart_week import get_current_week_id
+
 router = APIRouter()
 
 # =========================
@@ -14,6 +16,19 @@ router = APIRouter()
 
 LOCKED_DIR = Path("data/top100_locked")
 LIVE_FILE = Path("data/top100_live.json")
+
+# =========================
+# Internal helpers
+# =========================
+
+def _safe_read(path: Path):
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
 
 # =========================
 # Public API (READ-ONLY)
@@ -25,54 +40,27 @@ LIVE_FILE = Path("data/top100_live.json")
 )
 def get_top100() -> List[Dict]:
     """
-    Read-only Top 100 chart.
+    Read-only Uganda Top 100.
 
-    NOTE:
-    - Will return locked data once week publishing is wired
-    - Currently returns empty list safely
+    Resolution order:
+    1. Locked snapshot for current week (if published)
+    2. Empty list (safe fallback)
+
+    Never crashes.
+    Never mutates state.
     """
+    week_id = get_current_week_id()
+    locked_file = LOCKED_DIR / f"{week_id}.json"
+
+    locked = _safe_read(locked_file)
+    if isinstance(locked, list):
+        return locked
+
     return []
 
-# =========================
-# Internal helpers
-# =========================
-
-def _safe_read(path: Path):
-    try:
-        return json.loads(path.read_text())
-    except Exception:
-        return None
-
-
-def _safe_write(path: Path, data) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
-    tmp.replace(path)
 
 # =========================
-# Locking logic (ADMIN)
+# Explicit exports
 # =========================
 
-def lock_top100(week_id: str) -> None:
-    """
-    Lock current Top 100 for a given week.
-
-    Guarantees:
-    - Idempotent (will not overwrite)
-    - Atomic write
-    - Immutable once created
-    """
-    LOCKED_DIR.mkdir(parents=True, exist_ok=True)
-    target = LOCKED_DIR / f"{week_id}.json"
-
-    # Idempotency guard
-    if target.exists():
-        return
-
-    live = _safe_read(LIVE_FILE)
-
-    if not isinstance(live, list):
-        raise RuntimeError("Top100 live file is missing or invalid")
-
-    _safe_write(target, live)
+__all__ = ["router"]
