@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import Dict, List
 
 from data.permissions import ensure_injection_allowed
+from data.store import upsert_item
 
 router = APIRouter()
 
@@ -17,12 +18,16 @@ def ingest_tv(
     _: None = Depends(ensure_injection_allowed),
 ):
     """
-    Accepts validated TV ingestion payload.
-    No persistence yet (safe edge).
+    Ingest TV data.
+
+    Guarantees:
+    - song_id is primary key
+    - Idempotent (safe to resend)
+    - TV appearances merged into existing item
     """
 
     # -------------------------
-    # Basic structure check
+    # Payload structure
     # -------------------------
     if not isinstance(payload, dict):
         raise HTTPException(
@@ -56,7 +61,7 @@ def ingest_tv(
             )
 
     # -------------------------
-    # Region validation
+    # Normalize & validate region
     # -------------------------
     region = payload["region"].title()
     if region not in VALID_REGIONS:
@@ -93,13 +98,36 @@ def ingest_tv(
             )
 
     # -------------------------
-    # ACCEPTED (no persistence yet)
+    # Build canonical item
     # -------------------------
+    item = {
+        "song_id": payload["song_id"],
+        "title": payload["title"],
+        "artist": payload["artist"],
+        "region": region,
+        "tv_appearances": payload["appearances"],
+        "tv_channels": channels,
+        # Temporary scoring (merged later)
+        "score": payload["appearances"],
+        "source": "tv",
+    }
+
+    # -------------------------
+    # Persist (UPSERT)
+    # -------------------------
+    try:
+        upsert_item(item)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
+
     return {
         "status": "ok",
         "source": "tv",
-        "accepted": True,
-        "song_id": payload["song_id"],
+        "stored": True,
+        "song_id": item["song_id"],
         "region": region,
         "channels_count": len(channels),
     }
