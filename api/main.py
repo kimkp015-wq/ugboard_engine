@@ -3,26 +3,14 @@
 import os
 from fastapi import FastAPI
 
-# =========================
-# Environment
-# =========================
-
 ENV = os.getenv("ENV", "development")
 IS_PROD = ENV == "production"
-
-# =========================
-# Create app FIRST
-# =========================
 
 app = FastAPI(
     title="UG Board Engine",
     docs_url=None if IS_PROD else "/docs",
     redoc_url=None if IS_PROD else "/redoc",
 )
-
-# =========================
-# Root health check
-# =========================
 
 @app.get("/", tags=["Health"])
 def root():
@@ -33,16 +21,12 @@ def root():
         "docs_enabled": not IS_PROD,
     }
 
-# =========================
-# Startup contract checks
-# =========================
-
+# -------------------------
+# Contract validation
+# -------------------------
 def _validate_engine_contracts() -> None:
-    """
-    Hard fail early if core engine contracts are missing.
-    Prevents silent runtime corruption.
-    """
     import data.chart_week as chart_week
+    import data.index as index
 
     for name in (
         "get_current_week_id",
@@ -51,11 +35,7 @@ def _validate_engine_contracts() -> None:
         "open_new_tracking_week",
     ):
         if not hasattr(chart_week, name):
-            raise RuntimeError(
-                f"Engine startup failed: data.chart_week.{name} missing"
-            )
-
-    import data.index as index
+            raise RuntimeError(f"Missing chart_week.{name}")
 
     for name in (
         "get_index",
@@ -63,23 +43,21 @@ def _validate_engine_contracts() -> None:
         "week_already_published",
     ):
         if not hasattr(index, name):
-            raise RuntimeError(
-                f"Engine startup failed: data.index.{name} missing"
-            )
+            raise RuntimeError(f"Missing index.{name}")
 
 _validate_engine_contracts()
 
-# =========================
-# Import routers (AFTER validation)
-# =========================
+# -------------------------
+# Routers
+# -------------------------
 
-# Charts (PUBLIC / READ-ONLY)
+# Charts
 from api.charts.top100 import router as top100_router
 from api.charts.index import router as index_router
 from api.charts.regions import router as regions_router
 from api.charts.trending import router as trending_router
 
-# Ingestion (WRITE)
+# Ingestion
 from api.ingestion.youtube import router as youtube_router
 from api.ingestion.radio import router as radio_router
 from api.ingestion.tv import router as tv_router
@@ -88,13 +66,12 @@ from api.ingestion.tv import router as tv_router
 from api.admin.publish import router as publish_router
 from api.admin.index import router as admin_index_router
 from api.admin.health import router as admin_health_router
-from api.admin.regions import router as admin_regions_router  # expected surface
 
-# =========================
+# -------------------------
 # Register routers
-# =========================
+# -------------------------
 
-# Charts (single source of truth)
+# Charts
 app.include_router(top100_router, prefix="/charts", tags=["Charts"])
 app.include_router(index_router, prefix="/charts", tags=["Charts"])
 app.include_router(regions_router, prefix="/charts", tags=["Charts"])
@@ -109,4 +86,3 @@ app.include_router(tv_router, prefix="/ingest", tags=["Ingestion"])
 app.include_router(publish_router, prefix="/admin", tags=["Admin"])
 app.include_router(admin_index_router, prefix="/admin", tags=["Admin"])
 app.include_router(admin_health_router, prefix="/admin", tags=["Health"])
-app.include_router(admin_regions_router, prefix="/admin", tags=["Admin"])
