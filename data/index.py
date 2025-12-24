@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Set
+from typing import Set, Dict
 
 INDEX_FILE = Path("data/index.json")
 
@@ -12,17 +12,26 @@ INDEX_FILE = Path("data/index.json")
 # Internal helpers
 # -------------------------
 
-def _load_index() -> dict:
+def _load_index() -> Dict:
     if not INDEX_FILE.exists():
-        return {"published_weeks": []}
+        return {
+            "published_weeks": [],
+            "last_published_at": None,
+        }
 
     try:
-        return json.loads(INDEX_FILE.read_text())
+        data = json.loads(INDEX_FILE.read_text())
+        if not isinstance(data, dict):
+            raise ValueError("Invalid index format")
+        return data
     except Exception:
-        return {"published_weeks": []}
+        return {
+            "published_weeks": [],
+            "last_published_at": None,
+        }
 
 
-def _save_index(data: dict) -> None:
+def _save_index(data: Dict) -> None:
     INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = INDEX_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2))
@@ -32,6 +41,18 @@ def _save_index(data: dict) -> None:
 # -------------------------
 # Public API
 # -------------------------
+
+def get_index() -> Dict:
+    """
+    Read-only index access.
+
+    Used by:
+    - public charts
+    - admin dashboards
+    - internal verification
+    """
+    return _load_index()
+
 
 def record_week_publish(week_id: str) -> None:
     """
