@@ -4,80 +4,85 @@ import json
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from typing import Dict
+from typing import Dict, Optional
+import tempfile
+import os
 
 EAT = ZoneInfo("Africa/Kampala")
 
 STATE_FILE = Path("data/scheduler_state.json")
-INDEX_FILE = Path("data/index.json")
 
 
 # -------------------------
 # Helpers
 # -------------------------
+
 def _now() -> str:
     return datetime.now(EAT).isoformat()
 
 
-def _load_json(path: Path) -> Dict:
+def _safe_read_json(path: Path) -> Dict:
+    """
+    Safe JSON read.
+    Never raises.
+    """
     if not path.exists():
         return {}
+
     try:
         return json.loads(path.read_text())
     except Exception:
         return {}
 
 
-def _save_json(path: Path, data: Dict) -> None:
+def _atomic_write(path: Path, data: Dict) -> None:
+    """
+    Atomic JSON write.
+    Prevents partial file corruption.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2))
 
-
-def _update_index(update: Dict) -> None:
-    index = _load_json(INDEX_FILE)
-    index.update(update)
-    _save_json(INDEX_FILE, index)
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent)
+    try:
+        with os.fdopen(tmp_fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 # -------------------------
-# Scheduler state
+# Scheduler state (ISOLATED)
 # -------------------------
+
 def _load_state() -> Dict:
     """
     Load scheduler state from disk.
     Safe: never raises.
     """
-    return _load_json(STATE_FILE)
+    return _safe_read_json(STATE_FILE)
 
 
 def record_scheduler_run(trigger: str = "unknown") -> Dict:
     """
-    Record a successful scheduler run.
+    Record a successful scheduler or admin-triggered run.
 
-    trigger examples:
-    - cron
-    - cloudflare_worker
-    - admin_manual
+    This state is:
+    - Informational only
+    - NOT part of chart index
+    - Safe to overwrite
     """
     state = {
         "last_run_at": _now(),
         "trigger": trigger,
     }
 
-    _save_json(STATE_FILE, state)
-
-    # Sync to index for observability
-    _update_index(
-        {
-            "last_scheduler_run_at": state["last_run_at"],
-            "last_scheduler_trigger": state["trigger"],
-        }
-    )
-
+    _atomic_write(STATE_FILE, state)
     return state
 
 
-def get_last_scheduler_run() -> Dict | None:
+def get_last_scheduler_run() -> Optional[Dict]:
     """
     Return last scheduler run info.
     Returns None if never run.
