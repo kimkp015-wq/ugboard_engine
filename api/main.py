@@ -66,6 +66,9 @@ from api.ingestion.tv import router as tv_router
 from api.admin.publish import router as publish_router
 from api.admin.index import router as admin_index_router
 from api.admin.health import router as admin_health_router
+# Admin (READ)
+from api.admin.index import router as admin_index_router
+from api.admin.health import router as admin_health_router
 
 # -------------------------
 # Register routers
@@ -86,3 +89,5 @@ app.include_router(tv_router, prefix="/ingest", tags=["Ingestion"])
 app.include_router(publish_router, prefix="/admin", tags=["Admin"])
 app.include_router(admin_index_router, prefix="/admin", tags=["Admin"])
 app.include_router(admin_health_router, prefix="/admin", tags=["Health"])
+app.include_router(admin_health_router, prefix="/admin", tags=["Health"])
+app.include_router(admin_index_router, prefix="/admin", tags=["Admin"])
