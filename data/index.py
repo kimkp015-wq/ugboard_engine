@@ -5,6 +5,8 @@ import json
 from typing import Dict, List, Optional
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import tempfile
+import os
 
 INDEX_FILE = Path("data/index.json")
 EAT = ZoneInfo("Africa/Kampala")
@@ -23,6 +25,7 @@ def _safe_read() -> List[Dict]:
     """
     Read index file safely.
     Always returns a list.
+    Never raises.
     """
     if not INDEX_FILE.exists():
         return []
@@ -34,19 +37,36 @@ def _safe_read() -> List[Dict]:
         return []
 
 
-def _safe_write(data: List[Dict]) -> None:
+def _atomic_write(data: List[Dict]) -> None:
     """
-    Atomic write to index.json.
+    Atomic append-safe write.
+    Prevents corruption during concurrent writes.
     """
     INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = INDEX_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
-    tmp.replace(INDEX_FILE)
+
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=INDEX_FILE.parent)
+    try:
+        with os.fdopen(tmp_fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, INDEX_FILE)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 # -------------------------
-# Public API
+# Public API (ENGINE CONTRACT)
 # -------------------------
+
+def week_already_published(week_id: str) -> bool:
+    """
+    Idempotency guard.
+    """
+    return any(
+        isinstance(entry, dict) and entry.get("week_id") == week_id
+        for entry in _safe_read()
+    )
+
 
 def record_week_publish(
     *,
@@ -57,37 +77,35 @@ def record_week_publish(
     """
     Append an immutable publish record.
 
-    Safe to call once per week.
-    Idempotency must be guarded by caller.
+    HARD GUARANTEES:
+    - Append-only
+    - Idempotent
+    - Atomic
     """
 
     index = _safe_read()
 
+    # Internal idempotency enforcement (DO NOT TRUST CALLERS)
+    if any(
+        isinstance(entry, dict) and entry.get("week_id") == week_id
+        for entry in index
+    ):
+        return next(
+            entry for entry in index
+            if entry.get("week_id") == week_id
+        )
+
     record: Dict = {
         "week_id": week_id,
         "published_at": _now(),
+        "regions": list(regions) if regions else [],
+        "trigger": trigger or "unknown",
     }
 
-    if regions:
-        record["regions"] = list(regions)
-
-    if trigger:
-        record["trigger"] = trigger
-
     index.append(record)
-    _safe_write(index)
+    _atomic_write(index)
 
     return record
-
-
-def week_already_published(week_id: str) -> bool:
-    """
-    Idempotency guard.
-    """
-    return any(
-        isinstance(entry, dict) and entry.get("week_id") == week_id
-        for entry in _safe_read()
-    )
 
 
 def get_index() -> List[Dict]:
