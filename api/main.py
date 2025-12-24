@@ -21,7 +21,7 @@ app = FastAPI(
 )
 
 # =========================
-# Root health check
+# Root health check (PUBLIC)
 # =========================
 
 @app.get("/", tags=["Health"])
@@ -76,8 +76,6 @@ _validate_engine_contracts()
 # Charts (PUBLIC / READ-ONLY)
 from api.charts.top100 import router as top100_router
 from api.charts.index import router as index_router
-
-# OPTIONAL but EXPECTED
 from api.charts.regions import router as regions_router
 from api.charts.trending import router as trending_router
 
@@ -88,7 +86,8 @@ from api.ingestion.tv import router as tv_router
 
 # Admin
 from api.admin.publish import router as publish_router
-from api.admin.regions import router as admin_regions_router
+from api.admin.index import router as admin_index_router
+from api.admin.health import router as admin_health_router
 
 # =========================
 # Register routers
@@ -107,4 +106,5 @@ app.include_router(tv_router, prefix="/ingest", tags=["Ingestion"])
 
 # Admin
 app.include_router(publish_router, prefix="/admin", tags=["Admin"])
-app.include_router(admin_regions_router, prefix="/admin", tags=["Admin"])
+app.include_router(admin_index_router, prefix="/admin", tags=["Admin"])
+app.include_router(admin_health_router, prefix="/admin", tags=["Health"])
