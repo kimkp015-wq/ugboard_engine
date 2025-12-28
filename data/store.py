@@ -1,96 +1,66 @@
+# data/store.py (excerpt)
+
 import json
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict
 
-from data.scoring import compute_score
+STORE_FILE = Path("data/items.json")
 
-ITEMS_FILE = Path("data/items.json")
-
-
-# ------------------------
-# Internal helpers
-# ------------------------
-
-def _safe_read_json(path: Path):
-    try:
-        return json.loads(path.read_text())
-    except Exception:
-        return None
-
-
-def _safe_write_json(path: Path, data) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
-    tmp.replace(path)
-
-
-# ------------------------
-# Public API
-# ------------------------
 
 def load_items() -> List[Dict]:
-    if not ITEMS_FILE.exists():
+    if not STORE_FILE.exists():
         return []
 
-    data = _safe_read_json(ITEMS_FILE)
-    if not isinstance(data, list):
+    try:
+        data = json.loads(STORE_FILE.read_text())
+        return data if isinstance(data, list) else []
+    except Exception:
         return []
 
-    cleaned: List[Dict] = []
 
-    for item in data:
-        if isinstance(item, dict) and "song_id" in item:
-            cleaned.append(item)
-
-    return cleaned
-
-
-def get_item_by_song_id(song_id: str) -> Optional[Dict]:
-    for item in load_items():
-        if item.get("song_id") == song_id:
-            return item
-    return None
+def _atomic_write(data: List[Dict]) -> None:
+    STORE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STORE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    tmp.replace(STORE_FILE)
 
 
-def upsert_item(new_item: Dict) -> Dict:
+def upsert_items(items: List[Dict]) -> int:
     """
-    Merge + recompute score.
-    This is the ONLY place score is calculated.
+    Insert new items only.
+    Hard dedup by (source, video_id).
+
+    Returns number of inserted items.
     """
+    if not items:
+        return 0
 
-    if not isinstance(new_item, dict):
-        raise ValueError("item must be a dict")
+    existing = load_items()
 
-    song_id = new_item.get("song_id")
-    if not song_id or not isinstance(song_id, str):
-        raise ValueError("Missing required field: song_id")
+    # Build lookup: (source, video_id)
+    seen = {
+        (i.get("source"), i.get("video_id"))
+        for i in existing
+        if isinstance(i, dict)
+    }
 
-    items = load_items()
-    updated = False
+    inserted = 0
 
-    for idx, item in enumerate(items):
-        if item.get("song_id") == song_id:
-            merged = {**item, **new_item}
-            merged["score"] = compute_score(merged)
-            items[idx] = merged
-            updated = True
-            break
+    for item in items:
+        if not isinstance(item, dict):
+            continue
 
-    if not updated:
-        new_item["score"] = compute_score(new_item)
-        items.append(new_item)
+        key = (item.get("source"), item.get("video_id"))
 
-    _safe_write_json(ITEMS_FILE, items)
-    return new_item
+        # Reject invalid or duplicate
+        if None in key or key in seen:
+            continue
 
+        existing.append(item)
+        seen.add(key)
+        inserted += 1
 
-def delete_item(song_id: str) -> bool:
-    items = load_items()
-    filtered = [i for i in items if i.get("song_id") != song_id]
+    if inserted:
+        _atomic_write(existing)
 
-    if len(filtered) == len(items):
-        return False
-
-    _safe_write_json(ITEMS_FILE, filtered)
-    return True
+    return inserted
