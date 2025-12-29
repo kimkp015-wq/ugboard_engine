@@ -1,114 +1,103 @@
 # api/ingestion/youtube.py
 
 from fastapi import APIRouter, Depends, HTTPException
-from typing import Dict
+from typing import List, Dict
 
-from data.permissions import ensure_injection_allowed
-from data.store import upsert_item
+from data.permissions import ensure_ingest_allowed
+from data.store import upsert_items
 
 router = APIRouter()
 
-VALID_REGIONS = {"Eastern", "Northern", "Western"}
+# =========================
+# Payload contract
+# =========================
 
+class IngestPayload(Dict):
+    """
+    Expected item shape (already normalized by worker):
+
+    {
+      "source": "youtube",
+      "video_id": "...",
+      "title": "...",
+      "channel_id": "...",
+      "published_at": "...",
+      "score": 0
+    }
+    """
+    pass
+
+
+# =========================
+# Ingestion endpoint
+# =========================
 
 @router.post(
     "/youtube",
-    summary="Ingest YouTube data (validated)",
+    summary="Ingest YouTube videos (worker-only)",
 )
 def ingest_youtube(
     payload: Dict,
-    _: None = Depends(ensure_injection_allowed),
+    _: None = Depends(ensure_ingest_allowed),
 ):
     """
-    Ingest YouTube data.
+    Secure ingestion endpoint.
 
     Guarantees:
-    - song_id is primary key
-    - Idempotent (safe to resend)
-    - Auth required (Swagger popup enabled)
+    - Token-protected
+    - Idempotent (video_id is key)
+    - Never crashes engine
+    - Bulk-safe
     """
+    items = payload.get("items")
 
-    # -------------------------
-    # Payload structure
-    # -------------------------
-    if not isinstance(payload, dict):
+    if not isinstance(items, list):
         raise HTTPException(
             status_code=400,
-            detail="Payload must be a JSON object",
+            detail="Invalid payload: items must be a list",
         )
 
-    # -------------------------
-    # Required fields
-    # -------------------------
-    required_fields = {
-        "song_id": str,
-        "title": str,
-        "artist": str,
-        "region": str,
-        "views": int,
-    }
+    accepted = 0
 
-    for field, expected_type in required_fields.items():
-        if field not in payload:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Missing required field: {field}",
-            )
+    for item in items:
+        if not _is_valid_item(item):
+            continue
 
-        if not isinstance(payload[field], expected_type):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid type for '{field}'",
-            )
-
-    # -------------------------
-    # Normalize & validate region
-    # -------------------------
-    region = payload["region"].title()
-    if region not in VALID_REGIONS:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid region",
-        )
-
-    # -------------------------
-    # Views sanity check
-    # -------------------------
-    if payload["views"] < 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Views must be >= 0",
-        )
-
-    # -------------------------
-    # Build canonical item
-    # -------------------------
-    item = {
-        "song_id": payload["song_id"],
-        "title": payload["title"],
-        "artist": payload["artist"],
-        "region": region,
-        "youtube_views": payload["views"],
-        # score placeholder (future engine logic)
-        "score": payload["views"],
-        "source": "youtube",
-    }
-
-    # -------------------------
-    # Persist (UPSERT)
-    # -------------------------
-    try:
-        upsert_item(item)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=str(e),
-        )
+        try:
+            upsert_items([item])
+            accepted += 1
+        except Exception:
+            # Never crash ingestion loop
+            continue
 
     return {
         "status": "ok",
-        "source": "youtube",
-        "stored": True,
-        "song_id": item["song_id"],
-        "region": region,
+        "received": len(items),
+        "accepted": accepted,
     }
+
+
+# =========================
+# Validation (STRICT)
+# =========================
+
+REQUIRED_FIELDS = (
+    "source",
+    "video_id",
+    "title",
+    "channel_id",
+    "published_at",
+)
+
+def _is_valid_item(item: Dict) -> bool:
+    if not isinstance(item, dict):
+        return False
+
+    if item.get("source") != "youtube":
+        return False
+
+    for field in REQUIRED_FIELDS:
+        if field not in item:
+            return False
+
+    return True
