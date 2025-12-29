@@ -64,3 +64,14 @@ def upsert_items(items: List[Dict]) -> int:
         _atomic_write(existing)
 
     return inserted
+    # ---------------------------------
+# Compatibility alias (DO NOT REMOVE)
+# ---------------------------------
+
+def upsert_item(*args, **kwargs):
+    """
+    Backward-compatible alias.
+    Radio/TV ingestion depends on this name.
+    """
+    # choose the canonical upsert function you already use
+    return upsert_record(*args, **kwargs)
