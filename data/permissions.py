@@ -59,3 +59,6 @@ def ensure_internal_allowed(
 
     if x_internal_token != INTERNAL_TOKEN:
         raise HTTPException(403, "Internal access denied")
+# Backward compatibility alias
+ensure_ingest_allowed = ensure_injection_allowed
+
