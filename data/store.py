@@ -1,13 +1,25 @@
-# data/store.py (excerpt)
+# data/store.py
 
 import json
 from pathlib import Path
-from typing import List, Dict
+from typing import Dict, List
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+EAT = ZoneInfo("Africa/Kampala")
 
 STORE_FILE = Path("data/items.json")
 
 
-def load_items() -> List[Dict]:
+# -------------------------
+# Helpers
+# -------------------------
+
+def _now() -> str:
+    return datetime.now(EAT).isoformat()
+
+
+def _safe_read() -> List[Dict]:
     if not STORE_FILE.exists():
         return []
 
@@ -25,53 +37,58 @@ def _atomic_write(data: List[Dict]) -> None:
     tmp.replace(STORE_FILE)
 
 
-def upsert_items(items: List[Dict]) -> int:
+# -------------------------
+# Public API (ENGINE CONTRACT)
+# -------------------------
+
+def load_items() -> List[Dict]:
     """
-    Insert new items only.
-    Hard dedup by (source, video_id).
-
-    Returns number of inserted items.
+    Read-only load for charts.
     """
-    if not items:
-        return 0
+    return _safe_read()
 
-    existing = load_items()
 
-    # Build lookup: (source, video_id)
-    seen = {
-        (i.get("source"), i.get("video_id"))
-        for i in existing
-        if isinstance(i, dict)
+def upsert_item(item: Dict) -> Dict:
+    """
+    Idempotent insert/update.
+
+    Uniqueness key:
+    - source
+    - external_id
+
+    Behavior:
+    - If exists → update signals + updated_at
+    - If new → insert with created_at
+    """
+    if not isinstance(item, dict):
+        raise ValueError("Invalid item payload")
+
+    source = item.get("source")
+    external_id = item.get("external_id")
+
+    if not source or not external_id:
+        raise ValueError("Item must have source and external_id")
+
+    items = _safe_read()
+
+    for existing in items:
+        if (
+            existing.get("source") == source
+            and existing.get("external_id") == external_id
+        ):
+            # 🔁 UPDATE (idempotent)
+            existing.update(item)
+            existing["updated_at"] = _now()
+            _atomic_write(items)
+            return existing
+
+    # ➕ INSERT (new)
+    record = {
+        **item,
+        "created_at": _now(),
+        "updated_at": _now(),
     }
 
-    inserted = 0
-
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-
-        key = (item.get("source"), item.get("video_id"))
-
-        # Reject invalid or duplicate
-        if None in key or key in seen:
-            continue
-
-        existing.append(item)
-        seen.add(key)
-        inserted += 1
-
-    if inserted:
-        _atomic_write(existing)
-
-    return inserted
-    # ---------------------------------
-# Compatibility alias (DO NOT REMOVE)
-# ---------------------------------
-
-def upsert_item(*args, **kwargs):
-    """
-    Backward-compatible alias.
-    Radio/TV ingestion depends on this name.
-    """
-    # choose the canonical upsert function you already use
-    return upsert_record(*args, **kwargs)
+    items.append(record)
+    _atomic_write(items)
+    return record
