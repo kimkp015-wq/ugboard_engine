@@ -317,8 +317,8 @@ def publish_all_regions(
                     "region": region,
                     "status": "skipped",
                     "reason": "Already locked",
-                    "success": True
-                }
+                    "success": True,
+                })
                 continue
             
             # Build region chart
@@ -336,7 +336,7 @@ def publish_all_regions(
                         "region": region,
                         "status": "skipped",
                         "reason": "No items for region",
-                        "success": False
+                        "success": False,
                     })
                     continue
                 
@@ -376,7 +376,7 @@ def publish_all_regions(
                     "region": region,
                     "status": "published",
                     "count": len(formatted_items),
-                    "success": True
+                    "success": True,
                 })
                 
             except Exception as e:
@@ -384,7 +384,7 @@ def publish_all_regions(
                     "region": region,
                     "status": "failed",
                     "error": str(e),
-                    "success": False
+                    "success": False,
                 })
                 continue
                 
@@ -393,7 +393,7 @@ def publish_all_regions(
                 "region": region,
                 "status": "failed",
                 "error": str(e),
-                "success": False
+                "success": False,
             })
     
     # Count successes
@@ -406,7 +406,7 @@ def publish_all_regions(
         "regions_processed": len(results),
         "regions_successful": success_count,
         "regions_failed": len(results) - success_count,
-        "results": results
+        "results": results,
     }
 
 # =========================
