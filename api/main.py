@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from fastapi import FastAPI, Request, Depends, HTTPException
+from fastapi import FastAPI, Request, Depends, HTTPException, Body
 from fastapi.responses import JSONResponse
 from fastapi.openapi.utils import get_openapi
 
@@ -408,6 +408,92 @@ def publish_all_regions(
         "regions_failed": len(results) - success_count,
         "results": results,
     }
+
+# =========================
+# Emergency Chart Week Initialization Endpoint
+# =========================
+
+@app.post("/admin/initialize/week", tags=["Admin"])
+def initialize_chart_week_endpoint(
+    week_id: str = Body(None, description="Optional week ID (e.g., 2026-W03)"),
+    _: None = Depends(ensure_admin_allowed)
+):
+    """Emergency endpoint to initialize chart week system"""
+    try:
+        import json
+        import os
+        from datetime import datetime
+        
+        # Generate week ID if not provided
+        if not week_id:
+            now = datetime.now()
+            week_num = now.isocalendar()[1]
+            week_id = f"{now.year}-W{week_num:02d}"
+        
+        # Create week data
+        week_data = {
+            "week_id": week_id,
+            "start_date": datetime.now().isoformat(),
+            "status": "tracking",
+            "initialized_at": datetime.utcnow().isoformat(),
+            "regions": {
+                "Eastern": {"locked": False, "published": False},
+                "Northern": {"locked": False, "published": False},
+                "Western": {"locked": False, "published": False}
+            }
+        }
+        
+        # Ensure data directory exists
+        os.makedirs("data", exist_ok=True)
+        
+        # Save current_week.json
+        with open("data/current_week.json", "w") as f:
+            json.dump(week_data, f, indent=2)
+        
+        # Create index.json if it doesn't exist
+        if not os.path.exists("data/index.json"):
+            index_data = {
+                "initialized": True,
+                "first_week": week_id,
+                "weeks_published": [],
+                "stations_monitored": [],
+                "last_updated": datetime.utcnow().isoformat()
+            }
+            
+            with open("data/index.json", "w") as f:
+                json.dump(index_data, f, indent=2)
+        
+        # Also create empty region files
+        for region in ["Eastern", "Northern", "Western"]:
+            region_file = f"data/region_{region.lower()}.json"
+            if not os.path.exists(region_file):
+                with open(region_file, "w") as f:
+                    json.dump({
+                        "region": region,
+                        "week_id": week_id,
+                        "locked": False,
+                        "items": []
+                    }, f, indent=2)
+        
+        return {
+            "status": "success",
+            "message": "Chart week system initialized successfully",
+            "week_id": week_id,
+            "files_created": [
+                "data/current_week.json",
+                "data/index.json",
+                "data/region_eastern.json",
+                "data/region_northern.json", 
+                "data/region_western.json"
+            ],
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Initialization failed: {str(e)}"
+        )
 
 # =========================
 # Register routers
