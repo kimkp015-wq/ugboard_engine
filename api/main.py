@@ -318,7 +318,7 @@ def publish_all_regions(
                     "status": "skipped",
                     "reason": "Already locked",
                     "success": True
-                })
+                }
                 continue
             
             # Build region chart
