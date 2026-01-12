@@ -44,3 +44,23 @@ def ingest_youtube(payload: Dict):
         "skipped": skipped,
         "message": "Idempotent ingestion complete"
     }
+# Add to the end of your ingest_youtube function
+def ingest_youtube(payload: Dict):
+    # ... existing ingestion code ...
+    
+    # After successful ingestion, trigger scoring
+    try:
+        from api.scoring.auto import safe_auto_recalculate
+        from data.store import load_items
+        
+        # Get fresh items including newly ingested
+        all_items = load_items()
+        safe_auto_recalculate(all_items)
+        
+        logger.info(f"Auto-scoring triggered after ingestion")
+        
+    except Exception as e:
+        # Don't fail ingestion if scoring fails
+        logger.warning(f"Auto-scoring failed: {e}")
+    
+    return ingestion_result
