@@ -1,5 +1,8 @@
 import os
-from fastapi import FastAPI
+from datetime import datetime
+from fastapi import FastAPI, Request, Depends, HTTPException
+from fastapi.responses import JSONResponse
+from fastapi.openapi.utils import get_openapi
 
 # =========================
 # Environment
@@ -22,16 +25,17 @@ app = FastAPI(
 # Root health check (PUBLIC)
 # =========================
 
-@app.get("/", summary="Public engine health check")
+@app.get("/", summary="Public engine health check", tags=["Health"])
 def root():
     return {
         "engine": "UG Board Engine",
         "status": "online",
         "environment": ENV,
         "docs_enabled": not IS_PROD,
+        "timestamp": datetime.utcnow().isoformat()
     }
 
-@app.get("/health", summary="Health check endpoint")
+@app.get("/health", summary="Public health check endpoint", tags=["Health"])
 def health_check():
     return {
         "status": "healthy",
@@ -112,8 +116,7 @@ except ImportError:
 # NEW: Create missing admin endpoints
 # =========================
 
-from fastapi import APIRouter, Depends, HTTPException
-from datetime import datetime
+from fastapi import APIRouter
 from data.permissions import ensure_admin_allowed
 from data.store import load_items
 from data.region_store import lock_region, unlock_region, is_region_locked
@@ -490,15 +493,18 @@ app.include_router(
 )
 
 # =========================
-# Custom OpenAPI documentation
+# Custom OpenAPI documentation (OPTION C)
 # =========================
-
-from fastapi.openapi.utils import get_openapi
-from datetime import datetime
 
 def custom_openapi():
     """
-    Generate custom OpenAPI schema with enhanced documentation.
+    Generate custom OpenAPI schema with ONLY worker auth in Swagger.
+    
+    Swagger UI will show:
+    - 🔒 ONLY worker endpoint requires auth
+    - 🔓 All other endpoints are open for testing
+    
+    Production API still enforces all authentication.
     """
     if app.openapi_schema:
         return app.openapi_schema
@@ -506,57 +512,117 @@ def custom_openapi():
     openapi_schema = get_openapi(
         title="UG Board Engine API",
         version="1.0.0",
-        description="""
-        # UG Board Music Charting Engine
+        description=f"""
+        # 🎵 UG Board Music Charting Engine
         
-        ## Overview
-        Automated music chart system aggregating data from:
-        - YouTube videos
-        - Radio play data  
-        - TV broadcast data
+        ## 📊 Overview
+        Automated music chart system aggregating data from YouTube, Radio, and TV.
         
-        ## Authentication
-        1. **Internal/Cloudflare**: `X-Internal-Token` header
-        2. **Ingestion Clients**: `Authorization: Bearer <INJECT_TOKEN>`
-        3. **Admin Access**: `Authorization: Bearer <ADMIN_TOKEN>`
+        ## 🔐 Authentication (Production)
+        | Endpoint Type | Authentication Method | Token |
+        |---------------|----------------------|-------|
+        | **Worker** | `X-Internal-Token` header | `1994199620002019866` |
+        | **Admin** | `Authorization: Bearer` + `scheme` + `credentials` | `admin-ug-board-2025` |
+        | **Ingestion** | `Authorization: Bearer` | `inject-ug-board-2025` |
+        | **Charts** | No authentication required | - |
         
-        ## Data Flow
+        ## 🧪 Testing in Swagger
+        - **Worker endpoint only** shows authentication requirement
+        - **All other endpoints** are open for testing
+        - **Production API still requires proper authentication**
+        
+        ## 📡 Data Flow
         1. Ingestion → 2. Scoring → 3. Chart Calculation → 4. Weekly Publication
+        
+        *Environment: {ENV} | Last Updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}*
         """,
         routes=app.routes,
     )
     
-    # Add security schemes
+    # =========================
+    # SECURITY SCHEMES (Only Worker Auth in Swagger)
+    # =========================
     openapi_schema["components"]["securitySchemes"] = {
-        "InternalToken": {
+        "WorkerToken": {
             "type": "apiKey",
-            "in": "header",
+            "in": "header", 
             "name": "X-Internal-Token",
-            "description": "For Cloudflare Workers and internal automation"
-        },
-        "BearerAuth": {
-            "type": "http",
-            "scheme": "bearer",
-            "description": "Standard bearer token for ingestion clients"
-        },
-        "AdminToken": {
-            "type": "http",
-            "scheme": "bearer", 
-            "description": "Admin access for publishing and management"
+            "description": "🔒 Cloudflare Worker authentication token (Required in production)"
         }
     }
     
-    # Tag endpoints
+    # =========================
+    # APPLY SECURITY TO ENDPOINTS (Worker Only)
+    # =========================
+    # ONLY apply security to worker automation endpoint in Swagger
+    worker_endpoints = [
+        "/automation/weekly/regions",
+    ]
+    
     for path, methods in openapi_schema["paths"].items():
         for method, details in methods.items():
-            if "/admin/" in path:
-                details["tags"] = ["Admin"]
-            elif "/ingest/" in path:
-                details["tags"] = ["Ingestion"]
-            elif "/charts/" in path:
-                details["tags"] = ["Charts"]
-            else:
-                details["tags"] = ["Health"]
+            # Clear any existing security requirements
+            if "security" in details:
+                del details["security"]
+            
+            # Add security ONLY to worker endpoints
+            if path in worker_endpoints:
+                details["security"] = [{"WorkerToken": []}]
+                # Add helpful description
+                if "description" not in details:
+                    details["description"] = ""
+                details["description"] += "\n\n🔒 **Worker Authentication Required**\nUse `X-Internal-Token: 1994199620002019866`"
+    
+    # =========================
+    # ENHANCE ENDPOINT DESCRIPTIONS
+    # =========================
+    endpoint_categories = {
+        "/admin/": {
+            "tag": "Admin",
+            "description": "🔧 Administrative endpoints for chart management and publishing"
+        },
+        "/ingest/": {
+            "tag": "Ingestion", 
+            "description": "📥 Data ingestion endpoints (YouTube, Radio, TV)"
+        },
+        "/charts/": {
+            "tag": "Charts",
+            "description": "📊 Chart viewing endpoints (Top 100, Regions, Trending)"
+        },
+        "/automation/": {
+            "tag": "Automation",
+            "description": "🤖 Automated worker endpoints"
+        },
+        "/health": {
+            "tag": "Health",
+            "description": "❤️ Health check and monitoring endpoints"
+        }
+    }
+    
+    for path, methods in openapi_schema["paths"].items():
+        for method, details in methods.items():
+            # Add category tags
+            for prefix, info in endpoint_categories.items():
+                if path.startswith(prefix) or path == prefix:
+                    details["tags"] = [info["tag"]]
+                    if "description" not in details:
+                        details["description"] = info["description"]
+                    else:
+                        details["description"] = info["description"] + "\n\n" + details["description"]
+                    break
+            
+            # Add authentication hints for non-worker endpoints
+            if path not in worker_endpoints:
+                if "/admin/" in path:
+                    auth_hint = "🔐 **Production Authentication:** `Authorization: Bearer admin-ug-board-2025`"
+                elif "/ingest/" in path:
+                    auth_hint = "🔐 **Production Authentication:** `Authorization: Bearer inject-ug-board-2025`"
+                else:
+                    auth_hint = "🔓 **No authentication required**"
+                
+                if "description" not in details:
+                    details["description"] = ""
+                details["description"] += f"\n\n{auth_hint}"
     
     app.openapi_schema = openapi_schema
     return app.openapi_schema
@@ -568,9 +634,6 @@ app.openapi = custom_openapi
 # Error handlers
 # =========================
 
-from fastapi import Request
-from fastapi.responses import JSONResponse
-
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler"""
@@ -579,9 +642,30 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={
             "error": "Internal server error",
             "message": str(exc) if not IS_PROD else "Contact administrator",
-            "path": request.url.path
+            "path": request.url.path,
+            "timestamp": datetime.utcnow().isoformat()
         }
     )
+
+# =========================
+# Swagger Testing Helper Middleware (Optional)
+# =========================
+
+@app.middleware("http")
+async def swagger_testing_helper(request: Request, call_next):
+    """
+    Middleware to help with Swagger testing.
+    Adds CORS headers for easier testing.
+    """
+    response = await call_next(request)
+    
+    # Add CORS headers for Swagger endpoints
+    if request.url.path in ["/docs", "/redoc", "/openapi.json"] and not IS_PROD:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+    
+    return response
 
 # =========================
 # Startup message
@@ -592,4 +676,5 @@ if __name__ == "__main__":
     print("🚀 UG Board Engine starting...")
     print(f"📊 Environment: {ENV}")
     print(f"📚 Docs: {'Enabled' if not IS_PROD else 'Disabled'}")
+    print(f"🔐 Swagger Auth: Worker endpoint only")
     uvicorn.run(app, host="0.0.0.0", port=8000)
