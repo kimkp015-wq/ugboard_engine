@@ -129,3 +129,63 @@ def ingest_radio(
         "region": region,
         "stations_count": len(stations),
     }
+# Add these imports at the top if not there
+import os
+from datetime import datetime
+
+# Add this function at the end (before the last lines)
+
+@router.post("/radio/scrape")
+async def scrape_radio_stations(
+    x_internal_token: str = None
+):
+    """
+    Automatically scrape radio stations for current songs.
+    Cloudflare Worker will call this every 30 minutes.
+    """
+    # Verify it's our Cloudflare Worker calling
+    INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "1994199620002019866")
+    if x_internal_token != INTERNAL_TOKEN:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid token. Only Cloudflare Worker can call this."
+        )
+    
+    try:
+        # Import and run scraper
+        from .radio_scraper import UgandaRadioScraper
+        
+        scraper = UgandaRadioScraper()
+        result = await scraper.scrape_and_save()
+        
+        return {
+            "success": True,
+            "timestamp": datetime.utcnow().isoformat(),
+            "data": result
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Radio scraping failed: {str(e)}"
+        )
+
+@router.get("/radio/test")
+async def test_radio_scraper(
+    x_internal_token: str = None
+):
+    """Test endpoint to see if radio scraping works"""
+    INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "1994199620002019866")
+    if x_internal_token != INTERNAL_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid token")
+    
+    from .radio_scraper import UgandaRadioScraper
+    
+    scraper = UgandaRadioScraper()
+    songs = await scraper.scrape_all()
+    
+    return {
+        "stations_tested": len(scraper.stations),
+        "songs_found": len(songs),
+        "songs": songs
+    }
