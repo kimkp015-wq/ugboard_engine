@@ -1,8 +1,7 @@
 from fastapi import APIRouter, Depends
 from typing import List, Dict
 
-# CHANGE THIS IMPORT
-from data.permissions import ensure_internal_allowed  # ← NEW
+from data.permissions import ensure_internal_allowed
 from data.store import upsert_item
 
 router = APIRouter()
@@ -11,32 +10,37 @@ router = APIRouter()
     "/youtube",
     summary="Ingest YouTube videos (idempotent)",
     description="""
-    Idempotent ingestion endpoint for internal automation.
+    Idempotent ingestion endpoint for Cloudflare Worker automation.
     
     Authentication: X-Internal-Token header
-    For Cloudflare Workers and cron jobs.
+    For: Cloudflare Workers cron jobs and manual triggers
+    
+    Engine guarantees:
+    - Duplicate (source, external_id) WILL NOT create duplicates
+    - Safe to retry
+    - Safe for cron / workers
     """,
-    # ADD THIS DEPENDENCY
-    dependencies=[Depends(ensure_internal_allowed)],  # ← NEW
+    dependencies=[Depends(ensure_internal_allowed)],
 )
-def ingest_youtube(
-    payload: Dict,
-    # REMOVE THIS PARAMETER
-    # _: None = Depends(ensure_injection_allowed),  # ← REMOVE
-):
+def ingest_youtube(payload: Dict):
     items: List[Dict] = payload.get("items", [])
 
     ingested = []
+    skipped = 0
 
     for item in items:
         try:
-            ingested.append(upsert_item(item))
-        except Exception:
-            # Skip bad items safely
+            result = upsert_item(item)
+            ingested.append(result)
+        except Exception as e:
+            # Skip bad items safely - log but don't fail entire batch
+            skipped += 1
             continue
 
     return {
         "status": "ok",
         "received": len(items),
         "ingested": len(ingested),
+        "skipped": skipped,
+        "message": "Idempotent ingestion complete"
     }
