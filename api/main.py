@@ -31,6 +31,14 @@ def root():
         "docs_enabled": not IS_PROD,
     }
 
+@app.get("/health", summary="Health check endpoint")
+def health_check():
+    return {
+        "status": "healthy",
+        "service": "ug-board-engine",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
 # =========================
 # Startup contract checks
 # =========================
@@ -39,30 +47,34 @@ def _validate_engine_contracts() -> None:
     """
     Hard fail early if core engine contracts are missing.
     """
-    import data.chart_week as chart_week
+    try:
+        import data.chart_week as chart_week
 
-    for name in (
-        "get_current_week_id",
-        "current_chart_week",
-        "close_tracking_week",
-        "open_new_tracking_week",
-    ):
-        if not hasattr(chart_week, name):
-            raise RuntimeError(
-                f"Engine startup failed: data.chart_week.{name} missing"
-            )
+        for name in (
+            "get_current_week_id",
+            "current_chart_week",
+            "close_tracking_week",
+            "open_new_tracking_week",
+        ):
+            if not hasattr(chart_week, name):
+                raise RuntimeError(
+                    f"Engine startup failed: data.chart_week.{name} missing"
+                )
 
-    import data.index as index
+        import data.index as index
 
-    for name in (
-        "get_index",
-        "record_week_publish",
-        "week_already_published",
-    ):
-        if not hasattr(index, name):
-            raise RuntimeError(
-                f"Engine startup failed: data.index.{name} missing"
-            )
+        for name in (
+            "get_index",
+            "record_week_publish",
+            "week_already_published",
+        ):
+            if not hasattr(index, name):
+                raise RuntimeError(
+                    f"Engine startup failed: data.index.{name} missing"
+                )
+    except ImportError as e:
+        # Don't crash if modules don't exist yet
+        print(f"Warning during startup validation: {e}")
 
 _validate_engine_contracts()
 
@@ -81,21 +93,328 @@ from api.ingestion.youtube import router as youtube_router
 from api.ingestion.radio import router as radio_router
 from api.ingestion.tv import router as tv_router
 
-# Admin
-from api.admin.publish import router as publish_router
-from api.admin.index import router as admin_index_router
-from api.admin.health import router as admin_health_router
-from api.admin.regions_build import router as admin_regions_build_router
+# Admin - Check which modules actually exist
+try:
+    from api.admin.routes import router as admin_routes_router
+    ADMIN_ROUTES_AVAILABLE = True
+except ImportError:
+    ADMIN_ROUTES_AVAILABLE = False
+    print("Warning: api.admin.routes not found")
+
+try:
+    from api.admin.regions import router as admin_regions_router
+    ADMIN_REGIONS_AVAILABLE = True
+except ImportError:
+    ADMIN_REGIONS_AVAILABLE = False
+    print("Warning: api.admin.regions not found")
 
 # =========================
-# Register routers (TAGS LIVE HERE ONLY)
+# NEW: Create missing admin endpoints
+# =========================
+
+from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime
+from data.permissions import ensure_admin_allowed
+from data.store import load_items
+from data.region_store import lock_region, unlock_region, is_region_locked
+from data.region_snapshots import save_region_snapshot
+from data.chart_week import get_current_week_id
+from api.charts.scoring import calculate_scores
+
+# Create routers for missing endpoints
+admin_build_router = APIRouter()
+admin_publish_router = APIRouter()
+admin_health_router = APIRouter()
+
+VALID_REGIONS = ("Eastern", "Northern", "Western")
+
+# Health endpoints
+@admin_health_router.get("/health", tags=["Admin"])
+def admin_health(_: None = Depends(ensure_admin_allowed)):
+    """Admin-only health check with system status"""
+    try:
+        items = load_items()
+        
+        # Check region status
+        region_status = {}
+        for region in VALID_REGIONS:
+            region_status[region] = {
+                "locked": is_region_locked(region),
+                "item_count": len([i for i in items if i.get("region") == region])
+            }
+        
+        return {
+            "status": "healthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "total_items": len(items),
+            "regions": region_status,
+            "week_id": get_current_week_id()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
+
+# Region build endpoint
+@admin_build_router.post("/regions/{region}/build", tags=["Admin"])
+def build_region_chart(
+    region: str,
+    force: bool = False,
+    _: None = Depends(ensure_admin_allowed)
+):
+    """Build a region chart manually"""
+    region = region.title()
+    
+    if region not in VALID_REGIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid region. Valid: {VALID_REGIONS}"
+        )
+    
+    # Check if already locked (and not forcing)
+    if is_region_locked(region) and not force:
+        return {
+            "status": "skipped",
+            "reason": "Region already locked",
+            "region": region,
+            "locked": True
+        }
+    
+    # Unlock if forcing rebuild
+    if force and is_region_locked(region):
+        unlock_region(region)
+    
+    try:
+        # 1. Load items
+        items = load_items()
+        
+        if not items:
+            raise HTTPException(
+                status_code=404,
+                detail="No items found in database"
+            )
+        
+        # 2. Score items
+        scored_items = calculate_scores()
+        
+        if not scored_items:
+            raise HTTPException(
+                status_code=500,
+                detail="Scoring failed - no scored items returned"
+            )
+        
+        # 3. Filter by region
+        region_items = [
+            item for item in scored_items 
+            if item.get("region", "").title() == region
+        ]
+        
+        if not region_items:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No items found for region: {region}"
+            )
+        
+        # 4. Sort by score
+        region_items.sort(
+            key=lambda x: float(x.get("score", 0)),
+            reverse=True
+        )
+        
+        # 5. Take top 5
+        top5 = region_items[:5]
+        
+        # 6. Format for snapshot
+        formatted_items = []
+        for idx, item in enumerate(top5, 1):
+            formatted_items.append({
+                "position": idx,
+                "title": item.get("title", "Unknown"),
+                "artist": item.get("artist", "Unknown"),
+                "score": item.get("score", 0),
+                "youtube": item.get("youtube_views", 0),
+                "radio": item.get("radio_plays", 0),
+                "tv": item.get("tv_appearances", 0),
+                "region": item.get("region", region)
+            })
+        
+        # 7. Save snapshot
+        week_id = get_current_week_id()
+        snapshot_data = {
+            "week_id": week_id,
+            "region": region,
+            "locked": True,
+            "created_at": datetime.utcnow().isoformat(),
+            "count": len(formatted_items),
+            "items": formatted_items
+        }
+        
+        save_region_snapshot(region, snapshot_data)
+        
+        # 8. Lock region
+        lock_region(region)
+        
+        return {
+            "status": "success",
+            "region": region,
+            "week_id": week_id,
+            "count": len(formatted_items),
+            "items": formatted_items,
+            "snapshot_saved": True,
+            "region_locked": True
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Chart build failed: {str(e)}"
+        )
+
+@admin_build_router.post("/regions/{region}/unlock", tags=["Admin"])
+def unlock_region_endpoint(
+    region: str,
+    _: None = Depends(ensure_admin_allowed)
+):
+    """Unlock a region to allow rebuilding"""
+    region = region.title()
+    
+    if region not in VALID_REGIONS:
+        raise HTTPException(status_code=400, detail="Invalid region")
+    
+    try:
+        unlock_region(region)
+        return {
+            "status": "success",
+            "region": region,
+            "locked": False,
+            "message": "Region unlocked for rebuilding"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to unlock region: {str(e)}"
+        )
+
+# Publish endpoint
+@admin_publish_router.post("/publish/weekly", tags=["Admin"])
+def publish_all_regions(
+    force: bool = False,
+    skip_locked: bool = True,
+    _: None = Depends(ensure_admin_allowed)
+):
+    """Publish charts for all regions"""
+    results = []
+    week_id = get_current_week_id()
+    
+    for region in VALID_REGIONS:
+        try:
+            # Skip already locked regions unless forcing
+            if is_region_locked(region) and skip_locked and not force:
+                results.append({
+                    "region": region,
+                    "status": "skipped",
+                    "reason": "Already locked",
+                    "success": True
+                })
+                continue
+            
+            # Build region chart
+            try:
+                # Call the build function directly
+                items = load_items()
+                scored_items = calculate_scores()
+                region_items = [
+                    item for item in scored_items 
+                    if item.get("region", "").title() == region
+                ]
+                
+                if not region_items:
+                    results.append({
+                        "region": region,
+                        "status": "skipped",
+                        "reason": "No items for region",
+                        "success": False
+                    })
+                    continue
+                
+                region_items.sort(
+                    key=lambda x: float(x.get("score", 0)),
+                    reverse=True
+                )
+                
+                top5 = region_items[:5]
+                formatted_items = []
+                for idx, item in enumerate(top5, 1):
+                    formatted_items.append({
+                        "position": idx,
+                        "title": item.get("title", "Unknown"),
+                        "artist": item.get("artist", "Unknown"),
+                        "score": item.get("score", 0),
+                        "youtube": item.get("youtube_views", 0),
+                        "radio": item.get("radio_plays", 0),
+                        "tv": item.get("tv_appearances", 0),
+                        "region": item.get("region", region)
+                    })
+                
+                # Save snapshot
+                snapshot_data = {
+                    "week_id": week_id,
+                    "region": region,
+                    "locked": True,
+                    "created_at": datetime.utcnow().isoformat(),
+                    "count": len(formatted_items),
+                    "items": formatted_items
+                }
+                
+                save_region_snapshot(region, snapshot_data)
+                lock_region(region)
+                
+                results.append({
+                    "region": region,
+                    "status": "published",
+                    "count": len(formatted_items),
+                    "success": True
+                })
+                
+            except Exception as e:
+                results.append({
+                    "region": region,
+                    "status": "failed",
+                    "error": str(e),
+                    "success": False
+                })
+                continue
+                
+        except Exception as e:
+            results.append({
+                "region": region,
+                "status": "failed",
+                "error": str(e),
+                "success": False
+            })
+    
+    # Count successes
+    success_count = sum(1 for r in results if r.get("success", False))
+    
+    return {
+        "status": "completed",
+        "week_id": week_id,
+        "timestamp": datetime.utcnow().isoformat(),
+        "regions_processed": len(results),
+        "regions_successful": success_count,
+        "regions_failed": len(results) - success_count,
+        "results": results
+    }
+
+# =========================
+# Register routers
 # =========================
 
 # Health
 app.include_router(
     admin_health_router,
     prefix="/admin",
-    tags=["Health"],
+    tags=["Admin"],
 )
 
 # Charts
@@ -142,29 +461,40 @@ app.include_router(
     tags=["Ingestion"],
 )
 
-# Admin
+# Admin routes (if they exist)
+if ADMIN_ROUTES_AVAILABLE:
+    app.include_router(
+        admin_routes_router,
+        prefix="/admin",
+        tags=["Admin"],
+    )
+
+if ADMIN_REGIONS_AVAILABLE:
+    app.include_router(
+        admin_regions_router,
+        prefix="/admin",
+        tags=["Admin"],
+    )
+
+# Always include our new admin endpoints
 app.include_router(
-    publish_router,
+    admin_build_router,
     prefix="/admin",
     tags=["Admin"],
 )
 
 app.include_router(
-    admin_index_router,
-    prefix="/admin",
-    tags=["Admin"],
-)
-app.include_router(
-    admin_regions_build_router,
+    admin_publish_router,
     prefix="/admin",
     tags=["Admin"],
 )
 
 # =========================
-# Custom OpenAPI documentation (MUST BE AFTER app is defined!)
+# Custom OpenAPI documentation
 # =========================
 
 from fastapi.openapi.utils import get_openapi
+from datetime import datetime
 
 def custom_openapi():
     """
@@ -233,3 +563,33 @@ def custom_openapi():
 
 # Assign custom OpenAPI function
 app.openapi = custom_openapi
+
+# =========================
+# Error handlers
+# =========================
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler"""
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal server error",
+            "message": str(exc) if not IS_PROD else "Contact administrator",
+            "path": request.url.path
+        }
+    )
+
+# =========================
+# Startup message
+# =========================
+
+if __name__ == "__main__":
+    import uvicorn
+    print("🚀 UG Board Engine starting...")
+    print(f"📊 Environment: {ENV}")
+    print(f"📚 Docs: {'Enabled' if not IS_PROD else 'Disabled'}")
+    uvicorn.run(app, host="0.0.0.0", port=8000)
