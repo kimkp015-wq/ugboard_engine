@@ -276,7 +276,10 @@ def build_region_chart(
             "items": formatted_items
         }
         
-        save_region_snapshot(region, snapshot_data)
+        # ===========================================
+        # FIX 2: Remove region parameter - pass only snapshot_data
+        # ===========================================
+        save_region_snapshot(snapshot_data)  # ← FIXED! Only 1 parameter
         
         # 8. Lock region
         lock_region(region)
@@ -353,7 +356,7 @@ def publish_all_regions(
                 items = load_items()
                 
                 # ===========================================
-                # FIX 2: Pass items parameter to calculate_scores
+                # FIX 3: Pass items parameter to calculate_scores
                 # ===========================================
                 scored_items = calculate_scores(items)  # ← FIXED! Added 'items' parameter
                 
@@ -400,7 +403,10 @@ def publish_all_regions(
                     "items": formatted_items
                 }
                 
-                save_region_snapshot(region, snapshot_data)
+                # ===========================================
+                # FIX 4: Remove region parameter - pass only snapshot_data
+                # ===========================================
+                save_region_snapshot(snapshot_data)  # ← FIXED! Only 1 parameter
                 lock_region(region)
                 
                 results.append({
@@ -439,6 +445,123 @@ def publish_all_regions(
         "regions_failed": len(results) - success_count,
         "results": results,
     }
+
+# =========================
+# NEW: Direct data injection endpoint
+# =========================
+
+@app.post("/admin/add-test-data", tags=["Admin"])
+def add_test_data_endpoint(_: None = Depends(ensure_admin_allowed)):
+    """Directly add test data to the database"""
+    try:
+        import json
+        import os
+        
+        test_items = [
+            {
+                "id": "test_east_001",
+                "source": "youtube",
+                "external_id": "yt_east_001",
+                "title": "Kadongokamu - Eastern Vibes",
+                "artist": "John Blaq",
+                "youtube_views": 50000,
+                "radio_plays": 25,
+                "tv_appearances": 3,
+                "region": "Eastern",
+                "published_at": "2026-01-12T10:00:00Z",
+                "score": 0
+            },
+            {
+                "id": "test_east_002",
+                "source": "youtube",
+                "external_id": "yt_east_002",
+                "title": "Biri Biri - Dancehall",
+                "artist": "Sheebah",
+                "youtube_views": 75000,
+                "radio_plays": 40,
+                "tv_appearances": 5,
+                "region": "Eastern",
+                "published_at": "2026-01-11T14:30:00Z",
+                "score": 0
+            },
+            {
+                "id": "test_east_003",
+                "source": "youtube",
+                "external_id": "yt_east_003",
+                "title": "Malaika - Love Song",
+                "artist": "Eddy Kenzo",
+                "youtube_views": 120000,
+                "radio_plays": 60,
+                "tv_appearances": 8,
+                "region": "Eastern",
+                "published_at": "2026-01-10T09:15:00Z",
+                "score": 0
+            },
+            {
+                "id": "test_north_001",
+                "source": "youtube",
+                "external_id": "yt_north_001",
+                "title": "Acoli Traditional",
+                "artist": "Northern Artist",
+                "youtube_views": 30000,
+                "radio_plays": 20,
+                "tv_appearances": 2,
+                "region": "Northern",
+                "published_at": "2026-01-11T11:00:00Z",
+                "score": 0
+            },
+            {
+                "id": "test_west_001",
+                "source": "youtube",
+                "external_id": "yt_west_001",
+                "title": "Runyankole Rhythms",
+                "artist": "Western Artist",
+                "youtube_views": 40000,
+                "radio_plays": 15,
+                "tv_appearances": 1,
+                "region": "Western",
+                "published_at": "2026-01-10T15:45:00Z",
+                "score": 0
+            }
+        ]
+        
+        # Save to items.json
+        data_dir = "data"
+        os.makedirs(data_dir, exist_ok=True)
+        
+        items_file = os.path.join(data_dir, "items.json")
+        
+        # Load existing items
+        existing_items = []
+        if os.path.exists(items_file):
+            try:
+                with open(items_file, 'r') as f:
+                    existing_items = json.load(f)
+            except:
+                existing_items = []
+        
+        # Add test items (avoid duplicates)
+        existing_ids = [item.get("id") for item in existing_items]
+        new_items = [item for item in test_items if item["id"] not in existing_ids]
+        
+        existing_items.extend(new_items)
+        
+        # Save back
+        with open(items_file, 'w') as f:
+            json.dump(existing_items, f, indent=2)
+        
+        return {
+            "status": "success",
+            "message": f"Added {len(new_items)} test items",
+            "total_items": len(existing_items),
+            "regions_added": list(set(item["region"] for item in new_items))
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to add test data: {str(e)}"
+        )
 
 # =========================
 # Emergency Chart Week Initialization Endpoint
