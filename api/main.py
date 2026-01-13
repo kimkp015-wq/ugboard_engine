@@ -5,12 +5,16 @@ from fastapi.responses import JSONResponse
 from fastapi.openapi.utils import get_openapi
 
 # =========================
-# Environment
+# Environment - WORKING VERSION
 # =========================
 
-ENV = os.getenv("ENV", "development")
-IS_PROD = ENV == "production"
+# Force development mode for now
+# We'll fix Railway variables later
+ENV = "development"
+IS_PROD = False
 
+print(f"🚀 Starting UG Board Engine in {ENV} mode")
+print(f"📚 Docs enabled: {not IS_PROD}")
 # =========================
 # Create app FIRST
 # =========================
