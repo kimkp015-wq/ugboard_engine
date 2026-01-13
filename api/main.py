@@ -126,7 +126,27 @@ from data.store import load_items
 from data.region_store import lock_region, unlock_region, is_region_locked
 from data.region_snapshots import save_region_snapshot
 from data.chart_week import get_current_week_id
-from api.charts.scoring import calculate_scores
+
+# =========================
+# FIX: Import the CORRECT scoring function
+# =========================
+
+# Try to import from data.scoring first (new location)
+try:
+    from data.scoring import calculate_scores as data_scoring_calculate_scores
+    print("✅ Imported calculate_scores from data.scoring")
+    calculate_scores = data_scoring_calculate_scores
+except ImportError:
+    # Fall back to api.charts.scoring (old location)
+    try:
+        from api.charts.scoring import calculate_scores as api_scoring_calculate_scores
+        print("⚠️  Imported calculate_scores from api.charts.scoring (legacy)")
+        calculate_scores = api_scoring_calculate_scores
+    except ImportError:
+        print("❌ ERROR: calculate_scores function not found anywhere!")
+        # Create a dummy function that will fail clearly
+        def calculate_scores(items):
+            raise ImportError("calculate_scores function not found. Create data/scoring.py first!")
 
 # Create routers for missing endpoints
 admin_build_router = APIRouter()
@@ -199,8 +219,10 @@ def build_region_chart(
                 detail="No items found in database"
             )
         
-        # 2. Score items
-        scored_items = calculate_scores()
+        # ===========================================
+        # FIX 1: Pass items parameter to calculate_scores
+        # ===========================================
+        scored_items = calculate_scores(items)  # ← FIXED! Added 'items' parameter
         
         if not scored_items:
             raise HTTPException(
@@ -329,7 +351,12 @@ def publish_all_regions(
             try:
                 # Call the build function directly
                 items = load_items()
-                scored_items = calculate_scores()
+                
+                # ===========================================
+                # FIX 2: Pass items parameter to calculate_scores
+                # ===========================================
+                scored_items = calculate_scores(items)  # ← FIXED! Added 'items' parameter
+                
                 region_items = [
                     item for item in scored_items 
                     if item.get("region", "").title() == region
