@@ -49,15 +49,12 @@ def _load_items_safe() -> List[Dict]:
 # Public API
 # =========================
 
-def save_region_snapshot(region: str) -> Dict:
+def save_region_snapshot(region: str, snapshot_data: Optional[Dict] = None) -> Dict:
     """
-    Save immutable Top 5 snapshot for a region
-    for the current chart week.
-
-    Guarantees:
-    - Valid region
-    - Valid week
-    - Idempotent (no overwrite)
+    Save immutable Top 5 snapshot for a region.
+    
+    If snapshot_data is provided, use it (must include week_id).
+    Otherwise generate from items.
     """
     if region not in VALID_REGIONS:
         raise ValueError(f"Invalid region: {region}")
@@ -71,26 +68,33 @@ def save_region_snapshot(region: str) -> Dict:
 
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    items = _load_items_safe()
+    # USE PROVIDED DATA IF AVAILABLE
+    if snapshot_data:
+        # Validate snapshot_data has required fields
+        if "week_id" not in snapshot_data:
+            snapshot_data["week_id"] = week_id
+        if "region" not in snapshot_data:
+            snapshot_data["region"] = region
+        payload = snapshot_data
+    else:
+        # Generate data (original logic)
+        items = _load_items_safe()
+        region_items = [
+            i for i in items
+            if i.get("region") == region
+        ]
+        region_items.sort(
+            key=lambda x: x.get("score", 0),
+            reverse=True,
+        )
+        snapshot_items = region_items[:5]
 
-    region_items = [
-        i for i in items
-        if i.get("region") == region
-    ]
-
-    region_items.sort(
-        key=lambda x: x.get("score", 0),
-        reverse=True,
-    )
-
-    snapshot_items = region_items[:5]
-
-    payload = {
-        "week_id": week_id,
-        "region": region,
-        "count": len(snapshot_items),
-        "items": snapshot_items,
-    }
+        payload = {
+            "week_id": week_id,
+            "region": region,
+            "count": len(snapshot_items),
+            "items": snapshot_items,
+        }
 
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, indent=2))
