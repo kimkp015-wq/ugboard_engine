@@ -1,176 +1,183 @@
-"""
-SCORING LOGIC - PUT THIS IN /data/scoring.py
-"""
-import json
-import time
-from datetime import datetime, timezone
-from pathlib import Path
+"""SCORING LOGIC - Pure computation only, no side effects"""
 import logging
+from datetime import datetime, timezone
+from typing import Dict, List, Any
+from dataclasses import dataclass
+import hashlib
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(__file__).parent
-ITEMS_FILE = DATA_DIR / "items.json"
+@dataclass
+class ScoringWeights:
+    """Configurable scoring weights"""
+    YOUTUBE_VIEWS: float = 1.0
+    RADIO_PLAYS: float = 500.0
+    TV_APPEARANCES: float = 1000.0
+    TIME_BONUS_MAX: float = 1000.0
+    TIME_BONUS_DECAY_PER_DAY: float = 100.0
 
-def compute_score(item):
-    """Calculate score for one song"""
-    try:
-        views = float(item.get("youtube_views", 0) or 0)
-        radio = float(item.get("radio_plays", 0) or 0)
-        tv = float(item.get("tv_appearances", 0) or 0)
-        
-        # Score formula: views×1 + radio×500 + tv×1000
-        score = (views * 1) + (radio * 500) + (tv * 1000)
-        
-        # Add time bonus for new songs (max 1000, decreases 100 per day)
+class ScoreCalculator:
+    """Pure scoring calculator with no side effects"""
+    
+    def __init__(self, weights: ScoringWeights = None):
+        self.weights = weights or ScoringWeights()
+    
+    def compute_item_score(self, item: Dict[str, Any]) -> float:
+        """Calculate score for one song - pure function"""
+        try:
+            # Extract metrics with safe defaults
+            views = float(item.get("youtube_views", 0) or 0)
+            radio = float(item.get("radio_plays", 0) or 0)
+            tv = float(item.get("tv_appearances", 0) or 0)
+            
+            # Base score
+            base_score = (
+                views * self.weights.YOUTUBE_VIEWS +
+                radio * self.weights.RADIO_PLAYS +
+                tv * self.weights.TV_APPEARANCES
+            )
+            
+            # Time bonus
+            time_bonus = self._calculate_time_bonus(item)
+            
+            return max(0.0, base_score + time_bonus)
+            
+        except (TypeError, ValueError) as e:
+            logger.error(f"Error computing score: {e}, item: {item.get('id', 'unknown')}")
+            return 0.0
+    
+    def _calculate_time_bonus(self, item: Dict[str, Any]) -> float:
+        """Calculate time-based freshness bonus"""
         published = item.get("published_at") or item.get("timestamp")
-        if published:
-            try:
-                # Parse timestamp
-                if isinstance(published, str):
-                    if 'Z' in published:
-                        pub_date = datetime.fromisoformat(published.replace('Z', '+00:00'))
-                    else:
-                        pub_date = datetime.fromisoformat(published)
-                else:
-                    pub_date = published
-                
-                # Ensure timezone
-                if pub_date.tzinfo is None:
-                    pub_date = pub_date.replace(tzinfo=timezone.utc)
-                
-                # Calculate days old
-                now = datetime.now(timezone.utc)
-                days_old = (now - pub_date).total_seconds() / 86400
-                
-                # Time bonus: max 1000, decreases 100 per day
-                time_bonus = max(0, 1000 - (days_old * 100))
-                score += time_bonus
-                
-            except Exception as e:
-                logger.debug(f"Time bonus calculation failed: {e}")
-                # Continue without time bonus
+        if not published:
+            return 0.0
         
-        return max(0, score)
+        try:
+            # Parse timestamp
+            pub_date = self._parse_datetime(published)
+            if not pub_date:
+                return 0.0
+            
+            # Ensure UTC
+            if pub_date.tzinfo is None:
+                pub_date = pub_date.replace(tzinfo=timezone.utc)
+            
+            # Calculate age in days
+            now = datetime.now(timezone.utc)
+            days_old = (now - pub_date).total_seconds() / 86400
+            
+            # Apply decay
+            time_bonus = max(
+                0.0,
+                self.weights.TIME_BONUS_MAX - 
+                (days_old * self.weights.TIME_BONUS_DECAY_PER_DAY)
+            )
+            
+            return time_bonus
+            
+        except Exception as e:
+            logger.debug(f"Time bonus calculation failed: {e}")
+            return 0.0
+    
+    def _parse_datetime(self, timestamp) -> datetime:
+        """Parse various timestamp formats"""
+        if isinstance(timestamp, datetime):
+            return timestamp
         
-    except Exception as e:
-        logger.error(f"Error computing score for item: {e}")
-        return 0.0
+        if isinstance(timestamp, str):
+            # Handle ISO format with/without Z
+            timestamp = timestamp.replace('Z', '+00:00')
+            return datetime.fromisoformat(timestamp)
+        
+        return None
 
-def calculate_scores(items):
-    """Calculate scores for items and update database"""
+class ItemDeduplicator:
+    """Handle item deduplication and merging"""
+    
+    @staticmethod
+    def create_item_key(item: Dict[str, Any]) -> str:
+        """Create deterministic key for deduplication"""
+        source = item.get("source", "unknown").lower()
+        external_id = str(item.get("external_id", item.get("song_id", "unknown")))
+        region = item.get("region", "unknown").lower()
+        title = str(item.get("title", "")).lower().replace(" ", "_")
+        artist = str(item.get("artist", "")).lower().replace(" ", "_")
+        
+        # Create consistent hash-based key
+        key_parts = f"{source}:{external_id}:{region}:{title}:{artist}"
+        return hashlib.md5(key_parts.encode()).hexdigest()
+    
+    @staticmethod
+    def merge_items(base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge two items with accumulation logic"""
+        if not base:
+            return update.copy()
+        
+        merged = base.copy()
+        merged.update(update)
+        
+        # Accumulate countable metrics
+        for field in ["radio_plays", "youtube_views", "tv_appearances"]:
+            base_val = base.get(field, 0) or 0
+            update_val = update.get(field, 0) or 0
+            merged[field] = base_val + update_val
+        
+        # Merge lists
+        for field in ["radio_stations", "tv_channels"]:
+            base_list = base.get(field, []) or []
+            update_list = update.get(field, []) or []
+            if isinstance(base_list, list) and isinstance(update_list, list):
+                merged[field] = list(set(base_list) | set(update_list))
+        
+        return merged
+
+def calculate_scores(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Calculate scores for items - PURE FUNCTION, NO SIDE EFFECTS
+    
+    Args:
+        items: List of item dictionaries
+        
+    Returns:
+        List of items with calculated scores
+    """
     if not items:
         logger.warning("calculate_scores called with empty items list")
         return []
     
     logger.info(f"Calculating scores for {len(items)} items")
     
-    try:
-        # Load existing items
-        existing_items = []
-        if ITEMS_FILE.exists():
-            try:
-                with open(ITEMS_FILE, 'r', encoding='utf-8') as f:
-                    existing_items = json.load(f)
-            except json.JSONDecodeError:
-                logger.warning(f"{ITEMS_FILE} is corrupted, starting fresh")
-                existing_items = []
-        
-        # Create lookup for existing items by unique key
-        item_lookup = {}
-        for item in existing_items:
-            key = create_item_key(item)
-            item_lookup[key] = item
-        
-        # Process new items
-        scored_items = []
-        for item in items:
-            try:
-                # Create or update item
-                key = create_item_key(item)
-                existing_item = item_lookup.get(key, {})
-                
-                # Merge data (radio_plays accumulate)
-                merged_item = merge_items(existing_item, item)
-                
-                # Calculate score
-                merged_item["score"] = compute_score(merged_item)
-                merged_item["last_scored"] = datetime.now(timezone.utc).isoformat()
-                
-                # Update lookup
-                item_lookup[key] = merged_item
-                scored_items.append(merged_item)
-                
-            except Exception as e:
-                logger.error(f"Failed to score item: {e}")
-                continue
-        
-        # Save all items back
-        all_items = list(item_lookup.values())
-        with open(ITEMS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(all_items, f, indent=2, default=str)
-        
-        logger.info(f"Successfully scored {len(scored_items)} items, total: {len(all_items)}")
-        return scored_items
-        
-    except Exception as e:
-        logger.error(f"Failed to calculate scores: {e}")
-        raise
+    calculator = ScoreCalculator()
+    deduplicator = ItemDeduplicator()
+    
+    # Deduplicate items
+    item_dict = {}
+    for item in items:
+        key = deduplicator.create_item_key(item)
+        item_dict[key] = deduplicator.merge_items(
+            item_dict.get(key, {}), 
+            item
+        )
+    
+    # Calculate scores
+    scored_items = []
+    for key, item in item_dict.items():
+        try:
+            item["score"] = calculator.compute_item_score(item)
+            item["last_scored"] = datetime.now(timezone.utc).isoformat()
+            scored_items.append(item)
+        except Exception as e:
+            logger.error(f"Failed to score item {key}: {e}")
+            continue
+    
+    logger.info(f"Successfully scored {len(scored_items)} unique items")
+    return scored_items
 
-def create_item_key(item):
-    """Create unique key for an item"""
-    source = item.get("source", "unknown")
-    external_id = item.get("external_id", item.get("song_id", "unknown"))
-    region = item.get("region", "unknown")
-    
-    # For radio: include station and timestamp hour for deduplication
-    if source == "radio":
-        station = item.get("station", "unknown")
-        timestamp = item.get("timestamp", "")
-        if timestamp:
-            try:
-                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                hour = dt.strftime("%Y-%m-%d-%H")  # Group by hour
-                return f"radio:{station}:{hour}:{external_id}"
-            except:
-                pass
-    
-    return f"{source}:{external_id}:{region}"
-
-def merge_items(existing, new):
-    """Merge existing and new item data"""
-    merged = existing.copy() if existing else {}
-    merged.update(new)
-    
-    # Accumulate radio plays
-    if existing.get("source") == "radio" and new.get("source") == "radio":
-        existing_plays = existing.get("radio_plays", 0)
-        new_plays = new.get("radio_plays", 0)
-        merged["radio_plays"] = existing_plays + new_plays
-    
-    # Merge radio stations list
-    if existing.get("radio_stations") and new.get("radio_stations"):
-        existing_stations = set(existing.get("radio_stations", []))
-        new_stations = set(new.get("radio_stations", []))
-        merged["radio_stations"] = list(existing_stations.union(new_stations))
-    
-    return merged
-
-def get_top_items_by_region(region, limit=10):
-    """Get top items for a region"""
-    try:
-        if not ITEMS_FILE.exists():
-            return []
-        
-        with open(ITEMS_FILE, 'r', encoding='utf-8') as f:
-            all_items = json.load(f)
-        
-        # Filter by region and sort by score
-        region_items = [item for item in all_items if item.get("region") == region]
-        region_items.sort(key=lambda x: x.get("score", 0), reverse=True)
-        
-        return region_items[:limit]
-        
-    except Exception as e:
-        logger.error(f"Failed to get top items for {region}: {e}")
-        return []
+# Legacy function for backward compatibility
+def get_top_items_by_region(region: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """
+    Legacy function - should be moved to a separate query module
+    This creates a circular dependency with data store
+    """
+    logger.warning("get_top_items_by_region called - consider moving to data.store")
+    return []
