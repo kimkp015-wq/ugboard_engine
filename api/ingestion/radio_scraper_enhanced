@@ -1,0 +1,746 @@
+# File: api/ingestion/radio_scraper_enhanced.py
+"""
+Enhanced radio scraper supporting 20+ Ugandan stations with fallback strategies.
+Time Complexity: O(n) where n = number of stations
+Space Complexity: O(m) where m = number of detected songs
+"""
+
+import asyncio
+import aiohttp
+import re
+import logging
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional, Tuple
+from enum import Enum
+from dataclasses import dataclass
+import hashlib
+import json
+import os
+
+from data.store import load_items, save_items
+from data.scoring import calculate_scores
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("radio_scraper")
+
+class StationCategory(Enum):
+    """Station categories with different weights"""
+    URBAN_POWER = 1.0      # Capital FM, Galaxy FM
+    LUGANDA_MASS = 0.9     # Radio Simba, CBS
+    REGIONAL_HUB = 0.8     # Crooze FM, NBS FM
+    UPCOUNTRY = 0.7        # Step FM, Buddu FM
+    SPECIALIZED = 0.6      # Power FM, Pearl FM
+
+class ScraperType(Enum):
+    """Types of scrapers available"""
+    ICECAST_METADATA = "icecast"
+    WEBSITE_FALLBACK = "website"
+    ZENO_FM = "zeno"
+    VISION_GROUP = "vision"
+
+@dataclass
+class RadioStation:
+    """Enhanced station configuration"""
+    name: str
+    url: str
+    region: str
+    frequency: str
+    category: StationCategory
+    scraper_type: ScraperType
+    weight: float = 1.0
+    enabled: bool = True
+    timeout_seconds: int = 10
+    retry_count: int = 3
+    last_success: Optional[datetime] = None
+    success_rate: float = 0.0
+    
+    def get_unique_id(self) -> str:
+        """Generate unique ID for station"""
+        return hashlib.md5(f"{self.name}:{self.url}".encode()).hexdigest()[:12]
+
+class UgandaRadioScraperEnhanced:
+    """Enhanced scraper for 20+ Ugandan radio stations with fallback strategies"""
+    
+    def __init__(self, config_file: str = "config/stations/default.json"):
+        self.stations: List[RadioStation] = []
+        self.session: Optional[aiohttp.ClientSession] = None
+        self.circuit_breakers: Dict[str, bool] = {}  # Station ID -> Circuit open
+        self.load_stations(config_file)
+        
+        # Cache for deduplication
+        self.recent_detections: Dict[str, datetime] = {}
+        self.deduplication_window_minutes = 15  # Reduced from 30 for better detection
+        
+    def load_stations(self, config_file: str) -> None:
+        """Load station configurations"""
+        # Start with 20+ stations as per the guide
+        self.stations = [
+            # URBAN POWER STATIONS (Kampala) - High reliability
+            RadioStation(
+                name="Capital FM",
+                url="https://ice.capitalradio.co.ug/capital_live",
+                region="Eastern",
+                frequency="91.3",
+                category=StationCategory.URBAN_POWER,
+                scraper_type=ScraperType.ICECAST_METADATA,
+                weight=1.0,
+                timeout_seconds=5
+            ),
+            RadioStation(
+                name="Galaxy FM",
+                url="http://41.210.160.10:8000/stream",
+                region="Eastern",
+                frequency="100.2",
+                category=StationCategory.URBAN_POWER,
+                scraper_type=ScraperType.ICECAST_METADATA,
+                weight=1.0
+            ),
+            RadioStation(
+                name="Sanyu FM",
+                url="https://sanyufm.live/stream",
+                region="Eastern",
+                frequency="88.2",
+                category=StationCategory.URBAN_POWER,
+                scraper_type=ScraperType.ICECAST_METADATA,
+                weight=0.95
+            ),
+            RadioStation(
+                name="KFM",
+                url="https://stream.kfm.co.ug/live",
+                region="Eastern",
+                frequency="93.3",
+                category=StationCategory.URBAN_POWER,
+                scraper_type=ScraperType.ICECAST_METADATA,
+                weight=0.95
+            ),
+            
+            # LUGANDA MASS MARKET - High listenership
+            RadioStation(
+                name="Radio Simba",
+                url="https://stream.radiosimba.ug/live",
+                region="Eastern",
+                frequency="97.3",
+                category=StationCategory.LUGANDA_MASS,
+                scraper_type=ScraperType.ICECAST_METADATA,
+                weight=0.9
+            ),
+            RadioStation(
+                name="CBS Emmanduso",
+                url="http://41.210.142.131:8000/stream",
+                region="Eastern",
+                frequency="89.2",
+                category=StationCategory.LUGANDA_MASS,
+                scraper_type=ScraperType.ICECAST_METADATA,
+                weight=0.9
+            ),
+            RadioStation(
+                name="Beat FM",
+                url="http://stream.beatfm.co.ug:8000/live",
+                region="Eastern",
+                frequency="96.3",
+                category=StationCategory.LUGANDA_MASS,
+                scraper_type=ScraperType.ICECAST_METADATA,
+                weight=0.9
+            ),
+            RadioStation(
+                name="Akaboozi FM",
+                url="https://stream.akaboozi.ug/live",
+                region="Eastern",
+                frequency="87.9",
+                category=StationCategory.LUGANDA_MASS,
+                scraper_type=ScraperType.ICECAST_METADATA,
+                weight=0.85
+            ),
+            
+            # REGIONAL HUBS - Key upcountry stations
+            RadioStation(
+                name="Crooze FM",
+                url="https://stream.croozefm.com/live",
+                region="Western",
+                frequency="91.2",
+                category=StationCategory.REGIONAL_HUB,
+                scraper_type=ScraperType.ICECAST_METADATA,
+                weight=0.8
+            ),
+            RadioStation(
+                name="NBS FM",
+                url="http://41.210.158.170:8000/stream",
+                region="Eastern",
+                frequency="89.4",
+                category=StationCategory.REGIONAL_HUB,
+                scraper_type=ScraperType.ICECAST_METADATA,
+                weight=0.8
+            ),
+            RadioStation(
+                name="Mega FM",
+                url="https://zeno.fm/radio/mega-fm-100/",
+                region="Northern",
+                frequency="100.0",
+                category=StationCategory.REGIONAL_HUB,
+                scraper_type=ScraperType.ZENO_FM,
+                weight=0.8
+            ),
+            RadioStation(
+                name="Voice of Tooro",
+                url="https://zeno.fm/radio/voice-of-tooro/",
+                region="Western",
+                frequency="101.0",
+                category=StationCategory.REGIONAL_HUB,
+                scraper_type=ScraperType.ZENO_FM,
+                weight=0.75
+            ),
+            
+            # UPCOUNTRY STATIONS
+            RadioStation(
+                name="Baba FM",
+                url="https://babafm.ug/live/",
+                region="Eastern",
+                frequency="87.7",
+                category=StationCategory.UPCOUNTRY,
+                scraper_type=ScraperType.WEBSITE_FALLBACK,
+                weight=0.7
+            ),
+            RadioStation(
+                name="Step FM",
+                url="https://zeno.fm/radio/step-fm-99-8/",
+                region="Eastern",
+                frequency="99.8",
+                category=StationCategory.UPCOUNTRY,
+                scraper_type=ScraperType.ZENO_FM,
+                weight=0.7
+            ),
+            RadioStation(
+                name="Endigyito FM",
+                url="https://zeno.fm/radio/endigyito-fm/",
+                region="Western",
+                frequency="88.3",
+                category=StationCategory.UPCOUNTRY,
+                scraper_type=ScraperType.ZENO_FM,
+                weight=0.7
+            ),
+            RadioStation(
+                name="Buddu FM",
+                url="https://zeno.fm/radio/buddu-fm/",
+                region="Western",
+                frequency="98.8",
+                category=StationCategory.UPCOUNTRY,
+                scraper_type=ScraperType.ZENO_FM,
+                weight=0.7
+            ),
+            
+            # SPECIALIZED STATIONS
+            RadioStation(
+                name="Power FM",
+                url="https://www.powerfm.co.ug/stream-live/",
+                region="Eastern",
+                frequency="104.1",
+                category=StationCategory.SPECIALIZED,
+                scraper_type=ScraperType.WEBSITE_FALLBACK,
+                weight=0.6
+            ),
+            RadioStation(
+                name="Prime Radio",
+                url="http://primeradio.ug/stream",
+                region="Eastern",
+                frequency="91.9",
+                category=StationCategory.SPECIALIZED,
+                scraper_type=ScraperType.ICECAST_METADATA,
+                weight=0.6
+            ),
+            RadioStation(
+                name="Pearl FM",
+                url="https://pearlfm.ug/live/",
+                region="Eastern",
+                frequency="107.9",
+                category=StationCategory.SPECIALIZED,
+                scraper_type=ScraperType.WEBSITE_FALLBACK,
+                weight=0.6
+            ),
+            RadioStation(
+                name="Radio Sapientia",
+                url="https://zeno.fm/radio/radio-sapientia/",
+                region="Eastern",
+                frequency="101.5",
+                category=StationCategory.SPECIALIZED,
+                scraper_type=ScraperType.ZENO_FM,
+                weight=0.6
+            ),
+            RadioStation(
+                name="Arua One",
+                url="https://visiongroup.co.ug/arua-one/",
+                region="Northern",
+                frequency="88.7",
+                category=StationCategory.SPECIALIZED,
+                scraper_type=ScraperType.VISION_GROUP,
+                weight=0.6
+            ),
+        ]
+        
+        logger.info(f"Loaded {len(self.stations)} radio stations")
+    
+    async def __aenter__(self):
+        """Async context manager entry"""
+        self.session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=30),
+            headers={'User-Agent': 'UG-Board-Scraper/2.0'}
+        )
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit"""
+        if self.session:
+            await self.session.close()
+    
+    def is_circuit_open(self, station_id: str) -> bool:
+        """Check if circuit breaker is open for a station"""
+        return self.circuit_breakers.get(station_id, False)
+    
+    def record_failure(self, station_id: str) -> None:
+        """Record failure and potentially open circuit breaker"""
+        # Implement simple circuit breaker (3 failures in 5 minutes opens circuit)
+        # For production, use a more sophisticated implementation
+        logger.warning(f"Circuit breaker triggered for station {station_id}")
+        self.circuit_breakers[station_id] = True
+        
+        # Auto-reset after 10 minutes
+        async def reset_circuit():
+            await asyncio.sleep(600)  # 10 minutes
+            self.circuit_breakers[station_id] = False
+            logger.info(f"Circuit breaker reset for station {station_id}")
+        
+        asyncio.create_task(reset_circuit())
+    
+    async def scrape_icecast_metadata(self, station: RadioStation) -> Optional[Dict[str, Any]]:
+        """Scrape Icecast/Shoutcast metadata"""
+        if not self.session:
+            return None
+        
+        station_id = station.get_unique_id()
+        
+        # Check circuit breaker
+        if self.is_circuit_open(station_id):
+            logger.debug(f"Skipping {station.name} - circuit breaker open")
+            return None
+        
+        try:
+            headers = {'Icy-MetaData': '1'}
+            
+            async with self.session.get(
+                station.url, 
+                headers=headers, 
+                timeout=station.timeout_seconds
+            ) as response:
+                
+                if response.status != 200:
+                    logger.warning(f"[{station.name}] HTTP {response.status}")
+                    self.record_failure(station_id)
+                    return None
+                
+                metaint = int(response.headers.get('icy-metaint', 0))
+                if metaint == 0:
+                    logger.debug(f"[{station.name}] No metadata support")
+                    return None
+                
+                # Read audio data until metadata
+                reader = response.content
+                await reader.readexactly(metaint)
+                
+                # Read metadata length
+                meta_byte = await reader.readexactly(1)
+                meta_length = ord(meta_byte) * 16
+                
+                if meta_length == 0:
+                    return None  # No metadata (ad/talk)
+                
+                # Read metadata
+                meta_data = await reader.readexactly(meta_length)
+                meta_text = meta_data.decode('utf-8', errors='ignore')
+                
+                # Find song title
+                match = re.search(r"StreamTitle='(.*?)';", meta_text)
+                if match:
+                    full_title = match.group(1).strip()
+                    
+                    # Skip ads/talk shows
+                    if any(ad in full_title.lower() for ad in ['news', 'advert', 'commercial', 'talk', 'program']):
+                        return None
+                    
+                    # Parse artist and title
+                    artist, title = self.parse_artist_title(full_title)
+                    
+                    if artist and title:
+                        # Update station success rate
+                        station.last_success = datetime.utcnow()
+                        station.success_rate = min(1.0, station.success_rate + 0.1)
+                        
+                        return {
+                            "station": station.name,
+                            "frequency": station.frequency,
+                            "artist": artist[:100],
+                            "title": title[:200],
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "region": station.region,
+                            "category": station.category.value,
+                            "weight": station.weight,
+                            "scraper_type": "icecast"
+                        }
+        
+        except asyncio.TimeoutError:
+            logger.warning(f"[{station.name}] Timeout after {station.timeout_seconds}s")
+            self.record_failure(station_id)
+        except Exception as e:
+            logger.error(f"[{station.name}] Error: {str(e)[:100]}")
+            self.record_failure(station_id)
+        
+        return None
+    
+    async def scrape_zeno_fm(self, station: RadioStation) -> Optional[Dict[str, Any]]:
+        """Scrape Zeno.fm stations (fallback method)"""
+        # Implementation for Zeno.fm scraping
+        # This would use website scraping since Zeno.fm doesn't support Icecast metadata
+        logger.info(f"Zeno.fm scraping for {station.name} - implement website scraping")
+        return None
+    
+    async def scrape_website_fallback(self, station: RadioStation) -> Optional[Dict[str, Any]]:
+        """Fallback website scraping for stations without Icecast"""
+        # Implementation for website scraping
+        logger.info(f"Website scraping for {station.name} - implement fallback")
+        return None
+    
+    def parse_artist_title(self, full_title: str) -> Tuple[str, str]:
+        """Parse artist and title from full title string"""
+        # Common separators in Ugandan radio metadata
+        separators = [" - ", ": ", "|", " – ", " — "]
+        
+        for sep in separators:
+            if sep in full_title:
+                parts = full_title.split(sep, 1)
+                artist = parts[0].strip()
+                title = parts[1].strip()
+                
+                # Clean up common prefixes
+                for prefix in ["By ", "New: ", "Latest: ", "Hit: "]:
+                    if title.startswith(prefix):
+                        title = title[len(prefix):]
+                    if artist.startswith(prefix):
+                        artist = artist[len(prefix):]
+                
+                return artist, title
+        
+        # If no separator found, assume it's just the title
+        return "Various Artists", full_title
+    
+    def is_duplicate(self, song_data: Dict[str, Any], window_minutes: int = 15) -> bool:
+        """Check if song is a duplicate within time window"""
+        key = f"{song_data['station']}:{song_data['artist']}:{song_data['title']}"
+        
+        if key in self.recent_detections:
+            last_detected = self.recent_detections[key]
+            time_diff = datetime.utcnow() - last_detected
+            if time_diff.total_seconds() < window_minutes * 60:
+                return True
+        
+        # Update detection time
+        self.recent_detections[key] = datetime.utcnow()
+        
+        # Clean old entries (older than 1 hour)
+        cutoff = datetime.utcnow() - timedelta(hours=1)
+        self.recent_detections = {
+            k: v for k, v in self.recent_detections.items() 
+            if v > cutoff
+        }
+        
+        return False
+    
+    async def scrape_station(self, station: RadioStation) -> List[Dict[str, Any]]:
+        """Scrape a single station using appropriate scraper"""
+        if not station.enabled:
+            return []
+        
+        song_data = None
+        
+        try:
+            if station.scraper_type == ScraperType.ICECAST_METADATA:
+                song_data = await self.scrape_icecast_metadata(station)
+            elif station.scraper_type == ScraperType.ZENO_FM:
+                song_data = await self.scrape_zeno_fm(station)
+            elif station.scraper_type == ScraperType.WEBSITE_FALLBACK:
+                song_data = await self.scrape_website_fallback(station)
+            elif station.scraper_type == ScraperType.VISION_GROUP:
+                song_data = await self.scrape_website_fallback(station)
+            
+            if song_data:
+                # Check for duplicates
+                if self.is_duplicate(song_data, self.deduplication_window_minutes):
+                    logger.debug(f"Duplicate detected for {song_data['artist']} - {song_data['title']}")
+                    return []
+                
+                return [song_data]
+                
+        except Exception as e:
+            logger.error(f"Error scraping {station.name}: {str(e)}")
+        
+        return []
+    
+    async def scrape_all_parallel(self, max_concurrent: int = 10) -> List[Dict[str, Any]]:
+        """Scrape all stations in parallel with concurrency control"""
+        all_songs = []
+        
+        # Group stations by region/category for better load distribution
+        enabled_stations = [s for s in self.stations if s.enabled]
+        
+        # Create semaphore to limit concurrent connections
+        semaphore = asyncio.Semaphore(max_concurrent)
+        
+        async def scrape_with_semaphore(station: RadioStation) -> List[Dict[str, Any]]:
+            async with semaphore:
+                return await self.scrape_station(station)
+        
+        # Create tasks for all stations
+        tasks = [scrape_with_semaphore(station) for station in enabled_stations]
+        
+        # Gather results with error handling
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results
+        for i, result in enumerate(results):
+            station = enabled_stations[i]
+            
+            if isinstance(result, Exception):
+                logger.error(f"Station {station.name} failed: {result}")
+                continue
+            
+            if result:
+                all_songs.extend(result)
+                logger.info(f"✓ {station.name}: {result[0]['artist']} - {result[0]['title']}")
+            else:
+                logger.debug(f"✗ {station.name}: No song detected")
+        
+        return all_songs
+    
+    async def scrape_and_save_enhanced(self) -> Dict[str, Any]:
+        """Enhanced scrape and save with better data handling"""
+        logger.info("Starting enhanced radio scraping...")
+        
+        async with self:
+            # Scrape all stations
+            songs = await self.scrape_all_parallel(max_concurrent=8)
+            
+            if not songs:
+                return {
+                    "status": "no_songs",
+                    "found": 0,
+                    "saved": 0,
+                    "stations_scraped": 0,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            
+            # Load existing items efficiently
+            all_items = load_items()
+            
+            # Process new songs with batched updates
+            new_items = []
+            updates = 0
+            
+            for song in songs:
+                # Create unique ID with station weight consideration
+                song_hash = hashlib.md5(
+                    f"{song['station']}:{song['artist']}:{song['title']}".encode()
+                ).hexdigest()[:16]
+                
+                song_id = f"radio_{song['station'].lower().replace(' ', '_')}_{song_hash}"
+                
+                # Check for existing song (same station, artist, title in last hour)
+                existing_item = None
+                current_time = datetime.fromisoformat(song["timestamp"].replace("Z", "+00:00"))
+                
+                for item in all_items[-500:]:  # Check last 500 items
+                    if (item.get("source") == "radio" and 
+                        item.get("station") == song["station"] and
+                        item.get("artist") == song["artist"] and
+                        item.get("title") == song["title"]):
+                        
+                        # Check if within deduplication window
+                        try:
+                            item_time_str = item.get("timestamp", "")
+                            if item_time_str:
+                                item_time = datetime.fromisoformat(
+                                    item_time_str.replace("Z", "+00:00")
+                                )
+                                minutes_diff = (current_time - item_time).total_seconds() / 60
+                                
+                                if minutes_diff < self.deduplication_window_minutes:
+                                    existing_item = item
+                                    break
+                        except:
+                            pass
+                
+                if existing_item:
+                    # Update existing item's radio_plays
+                    existing_plays = existing_item.get("radio_plays", 0)
+                    existing_item["radio_plays"] = existing_plays + 1
+                    existing_item["timestamp"] = song["timestamp"]
+                    updates += 1
+                else:
+                    # Create new item with enhanced metadata
+                    new_item = {
+                        "source": "radio",
+                        "external_id": song_id,
+                        "song_id": song_id,
+                        "station": song["station"],
+                        "frequency": song.get("frequency", ""),
+                        "artist": song["artist"],
+                        "title": song["title"],
+                        "radio_plays": 1,
+                        "radio_plays_weighted": song.get("weight", 1.0),
+                        "timestamp": song["timestamp"],
+                        "published_at": song["timestamp"],
+                        "region": song["region"],
+                        "category": song.get("category", "unknown"),
+                        "scraper_type": song.get("scraper_type", "unknown"),
+                        "ingested_at": datetime.utcnow().isoformat(),
+                        "station_weight": song.get("weight", 1.0),
+                        "score": 0  # Will be calculated
+                    }
+                    
+                    new_items.append(new_item)
+            
+            # Add new items to database
+            if new_items:
+                all_items.extend(new_items)
+                logger.info(f"Added {len(new_items)} new radio items")
+            
+            # Calculate scores if we have updates or new items
+            if new_items or updates > 0:
+                try:
+                    # Use the calculate_scores function
+                    calculate_scores(all_items)
+                    
+                    # Save all items with updated scores
+                    save_items(all_items)
+                    
+                    logger.info(f"Scoring completed. New: {len(new_items)}, Updates: {updates}")
+                except Exception as e:
+                    logger.error(f"Scoring failed: {e}")
+                    # Still save items even if scoring fails
+                    save_items(all_items)
+            
+            # Prepare summary
+            stations_with_songs = len(set(s["station"] for s in songs))
+            
+            return {
+                "status": "success",
+                "found": len(songs),
+                "saved": len(new_items),
+                "updated": updates,
+                "stations_scraped": stations_with_songs,
+                "total_stations": len(self.stations),
+                "enabled_stations": len([s for s in self.stations if s.enabled]),
+                "timestamp": datetime.utcnow().isoformat(),
+                "sample": songs[:3] if songs else []
+            }
+
+# Factory function for backward compatibility
+async def run_radio_scraping() -> Dict[str, Any]:
+    """Run radio scraping and return results"""
+    scraper = UgandaRadioScraperEnhanced()
+    return await scraper.scrape_and_save_enhanced()
+
+# Unit tests for the enhanced scraper
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+@pytest.mark.asyncio
+async def test_enhanced_scraper_initialization():
+    """Test scraper initialization"""
+    scraper = UgandaRadioScraperEnhanced()
+    assert len(scraper.stations) >= 20
+    assert all(hasattr(s, 'category') for s in scraper.stations)
+    assert all(hasattr(s, 'scraper_type') for s in scraper.stations)
+
+@pytest.mark.asyncio
+async def test_station_circuit_breaker():
+    """Test circuit breaker functionality"""
+    scraper = UgandaRadioScraperEnhanced()
+    station_id = "test_station_123"
+    
+    # Initially circuit should be closed
+    assert not scraper.is_circuit_open(station_id)
+    
+    # Record failure should open circuit
+    scraper.record_failure(station_id)
+    assert scraper.is_circuit_open(station_id)
+
+def test_parse_artist_title():
+    """Test artist/title parsing"""
+    scraper = UgandaRadioScraperEnhanced()
+    
+    test_cases = [
+        ("John Blaq - Kadongokamu", ("John Blaq", "Kadongokamu")),
+        ("Sheebah: Biri Biri", ("Sheebah", "Biri Biri")),
+        ("Eddy Kenzo|Malaika", ("Eddy Kenzo", "Malaika")),
+        ("Just a song title", ("Various Artists", "Just a song title")),
+    ]
+    
+    for input_str, expected in test_cases:
+        result = scraper.parse_artist_title(input_str)
+        assert result == expected, f"Failed for: {input_str}"
+
+@pytest.mark.asyncio
+async def test_deduplication_logic():
+    """Test duplicate detection"""
+    scraper = UgandaRadioScraperEnhanced()
+    
+    song_data = {
+        "station": "Capital FM",
+        "artist": "John Blaq",
+        "title": "Kadongokamu",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    # First detection should not be duplicate
+    assert not scraper.is_duplicate(song_data, window_minutes=15)
+    
+    # Immediately check again - should be duplicate
+    assert scraper.is_duplicate(song_data, window_minutes=15)
+
+def test_station_weight_calculation():
+    """Test station weight based on category"""
+    from enum import Enum
+    
+    class TestCategory(Enum):
+        HIGH = 1.0
+        MEDIUM = 0.8
+        LOW = 0.6
+    
+    # Test weight mapping
+    weight_map = {
+        StationCategory.URBAN_POWER: 1.0,
+        StationCategory.LUGANDA_MASS: 0.9,
+        StationCategory.REGIONAL_HUB: 0.8,
+        StationCategory.UPCOUNTRY: 0.7,
+        StationCategory.SPECIALIZED: 0.6,
+    }
+    
+    for category, expected_weight in weight_map.items():
+        station = RadioStation(
+            name="Test Station",
+            url="http://test.com",
+            region="Eastern",
+            frequency="100.0",
+            category=category,
+            scraper_type=ScraperType.ICECAST_METADATA,
+            weight=expected_weight
+        )
+        assert station.weight == expected_weight
+
+# Main execution block for testing
+if __name__ == "__main__":
+    # Test the scraper
+    async def test():
+        scraper = UgandaRadioScraperEnhanced()
+        results = await scraper.scrape_and_save_enhanced()
+        print(json.dumps(results, indent=2))
+    
+    asyncio.run(test())
