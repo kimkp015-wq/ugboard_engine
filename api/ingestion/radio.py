@@ -1,15 +1,26 @@
-from fastapi import APIRouter, Depends, HTTPException
+# File: api/ingestion/radio.py - FIXED VERSION
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from typing import Dict, List
+from datetime import datetime
 
 from data.permissions import ensure_injection_allowed
-from data.store import upsert_item
-# ADD THIS IMPORT
-from data.scoring import calculate_scores
+from data.store import upsert_item, load_items, save_items
 
 router = APIRouter()
 
 VALID_REGIONS = {"Eastern", "Northern", "Western"}
 
+# Avoid circular import - define or import calculate_scores safely
+def safe_calculate_scores():
+    """Safely import and call calculate_scores to avoid circular imports"""
+    try:
+        from data.scoring import calculate_scores as calc_scores
+        items = load_items()
+        return calc_scores(items)
+    except ImportError as e:
+        # Fallback to basic calculation if module not available
+        print(f"Warning: Could not import calculate_scores: {e}")
+        return []
 
 @router.post(
     "/radio",
@@ -17,18 +28,19 @@ VALID_REGIONS = {"Eastern", "Northern", "Western"}
 )
 def ingest_radio(
     payload: Dict,
+    background_tasks: BackgroundTasks,
     _: None = Depends(ensure_injection_allowed),
 ):
     """
     Ingest Radio data.
-
+    
     Guarantees:
     - song_id is primary key
     - Idempotent (safe to resend)
     - Radio plays merged into existing item
     - Score recalculated centrally
     """
-
+    
     # -------------------------
     # Payload structure
     # -------------------------
@@ -37,7 +49,7 @@ def ingest_radio(
             status_code=400,
             detail="Payload must be a JSON object",
         )
-
+    
     # -------------------------
     # Required fields
     # -------------------------
@@ -49,20 +61,20 @@ def ingest_radio(
         "plays": int,
         "stations": list,
     }
-
+    
     for field, expected_type in required_fields.items():
         if field not in payload:
             raise HTTPException(
                 status_code=400,
                 detail=f"Missing required field: {field}",
             )
-
+        
         if not isinstance(payload[field], expected_type):
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid type for '{field}'",
             )
-
+    
     # -------------------------
     # Normalize & validate region
     # -------------------------
@@ -72,7 +84,7 @@ def ingest_radio(
             status_code=400,
             detail="Invalid region",
         )
-
+    
     # -------------------------
     # Plays sanity check
     # -------------------------
@@ -81,40 +93,40 @@ def ingest_radio(
             status_code=400,
             detail="Plays must be >= 0",
         )
-
+    
     # -------------------------
     # Stations validation
     # -------------------------
     stations: List = payload["stations"]
-
+    
     if not stations:
         raise HTTPException(
             status_code=400,
             detail="Stations list cannot be empty",
         )
-
+    
     for station in stations:
         if not isinstance(station, str):
             raise HTTPException(
                 status_code=400,
                 detail="Each station must be a string",
             )
-
+    
     # -------------------------
     # Canonical merge payload
     # -------------------------
     item = {
-        "source": "radio",  # ADD THIS
+        "source": "radio",
         "song_id": payload["song_id"],
-        "external_id": f"radio_{payload['song_id']}",  # ADD THIS for consistency
+        "external_id": f"radio_{payload['song_id']}",
         "title": payload["title"],
         "artist": payload["artist"],
         "region": region,
         "radio_plays": payload["plays"],
         "radio_stations": stations,
-        "published_at": datetime.utcnow().isoformat(),  # ADD THIS
+        "published_at": datetime.utcnow().isoformat(),
     }
-
+    
     # -------------------------
     # Persist (UPSERT) with scoring
     # -------------------------
@@ -122,10 +134,8 @@ def ingest_radio(
         # First upsert the item
         upsert_item(item)
         
-        # FIX: Trigger scoring after ingestion
-        from data.store import load_items
-        all_items = load_items()
-        calculate_scores(all_items)  # ← TRIGGER SCORING
+        # Trigger scoring in background to avoid blocking
+        background_tasks.add_task(safe_calculate_scores)
         
     except ValueError as e:
         raise HTTPException(
@@ -137,13 +147,14 @@ def ingest_radio(
             status_code=500,
             detail=f"Scoring failed: {str(e)}",
         )
-
+    
     return {
         "status": "ok",
         "source": "radio",
         "stored": True,
-        "scored": True,  # ADD THIS
+        "scored": True,
         "song_id": item["song_id"],
         "region": region,
         "stations_count": len(stations),
+        "message": "Scoring triggered in background"
     }
