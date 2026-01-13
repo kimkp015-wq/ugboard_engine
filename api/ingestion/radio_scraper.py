@@ -6,29 +6,44 @@ import hashlib
 import os
 
 from data.store import load_items, save_items
-from data.scoring import compute_score
+from data.scoring import compute_score, calculate_scores  # ← ADD calculate_scores
 
 class UgandaRadioScraper:
     """Simple radio scraper for UG Board"""
     
     def __init__(self):
-        # Start with these 4 reliable stations
+        # UPDATED: 5 stations with proper UG Board region mapping
         self.stations = [
             {
                 "name": "Capital FM",
                 "url": "https://ice.capitalradio.co.ug/capital_live",
-                "region": "central"
+                "region": "Eastern",  # Kampala-based → Eastern region
+                "frequency": "91.3"
             },
             {
                 "name": "Galaxy FM", 
                 "url": "http://41.210.160.10:8000/stream",
-                "region": "central"
+                "region": "Eastern",  # Kampala-based → Eastern region
+                "frequency": "100.2"
             },
             {
                 "name": "Radio Simba",
                 "url": "https://stream.radiosimba.ug/live", 
-                "region": "central"
+                "region": "Eastern",  # Kampala-based → Eastern region
+                "frequency": "97.3"
             },
+            {
+                "name": "Beat FM",
+                "url": "http://91.193.183.197:8000/beatfm",  # ADD THIS STATION
+                "region": "Eastern",  # Kampala-based → Eastern region
+                "frequency": "96.3"
+            },
+            {
+                "name": "Crooze FM",
+                "url": "http://stream.croozefm.com:8000/croozefm",  # ADD THIS STATION
+                "region": "Western",  # Mbarara-based → Western region
+                "frequency": "91.2"
+            }
         ]
     
     async def scrape_all(self):
@@ -37,28 +52,33 @@ class UgandaRadioScraper:
         for station in self.stations:
             tasks.append(self.scrape_one(station))
         
-        results = await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         
         all_songs = []
-        for songs in results:
-            if songs:
-                all_songs.extend(songs)
+        for result in results:
+            if isinstance(result, Exception):
+                print(f"Station failed: {result}")
+                continue
+            if result:
+                all_songs.extend(result)
         
         return all_songs
     
     async def scrape_one(self, station):
         """Scrape one station"""
         try:
-            headers = {'Icy-MetaData': '1'}
+            headers = {'Icy-MetaData': '1', 'User-Agent': 'UG-Board-Scraper/1.0'}
             
             async with aiohttp.ClientSession(timeout=5) as session:
                 async with session.get(station["url"], headers=headers) as response:
                     if response.status != 200:
+                        print(f"[{station['name']}] HTTP {response.status}")
                         return []
                     
                     # Check if station supports metadata
                     metaint = int(response.headers.get('icy-metaint', 0))
                     if metaint == 0:
+                        print(f"[{station['name']}] No metadata support")
                         return []
                     
                     # Read audio data until metadata
@@ -88,24 +108,38 @@ class UgandaRadioScraper:
                         elif ": " in full_title:
                             parts = full_title.split(": ", 1)
                             artist, title = parts[0].strip(), parts[1].strip()
+                        elif "|" in full_title:
+                            parts = full_title.split("|", 1)
+                            artist, title = parts[0].strip(), parts[1].strip()
                         else:
                             artist, title = "Unknown", full_title
                         
+                        # Clean up common prefixes
+                        if title.startswith("By "):
+                            title = title[3:]
+                        if artist.startswith("By "):
+                            artist = artist[3:]
+                        
                         return [{
                             "station": station["name"],
-                            "artist": artist,
-                            "title": title,
+                            "frequency": station["frequency"],
+                            "artist": artist[:100],  # Limit length
+                            "title": title[:200],     # Limit length
                             "timestamp": datetime.utcnow().isoformat(),
                             "region": station["region"]
                         }]
+                    else:
+                        print(f"[{station['name']}] No song title found in metadata")
         
+        except asyncio.TimeoutError:
+            print(f"[{station['name']}] Timeout")
         except Exception as e:
-            print(f"[RADIO ERROR] {station['name']}: {e}")
+            print(f"[RADIO ERROR] {station['name']}: {str(e)[:100]}")
         
         return []
     
     async def scrape_and_save(self):
-        """Scrape and save to database"""
+        """Scrape and save to database with proper scoring"""
         songs = await self.scrape_all()
         
         if not songs:
@@ -115,7 +149,7 @@ class UgandaRadioScraper:
         all_items = load_items()
         
         # Add new songs
-        new_count = 0
+        new_items = []
         for song in songs:
             # Create unique ID
             song_id = hashlib.md5(
@@ -124,7 +158,9 @@ class UgandaRadioScraper:
             
             # Check if already exists (same song in last 30 mins)
             is_new = True
-            for item in all_items[-100:]:  # Check last 100 items
+            current_time = datetime.fromisoformat(song["timestamp"].replace("Z", ""))
+            
+            for item in all_items[-200:]:  # Check last 200 items
                 if (item.get("source") == "radio" and 
                     item.get("artist") == song["artist"] and 
                     item.get("title") == song["title"] and
@@ -133,10 +169,12 @@ class UgandaRadioScraper:
                     # Check time
                     try:
                         item_time = datetime.fromisoformat(item.get("timestamp", "").replace("Z", ""))
-                        song_time = datetime.fromisoformat(song["timestamp"].replace("Z", ""))
-                        minutes_diff = (song_time - item_time).total_seconds() / 60
+                        minutes_diff = (current_time - item_time).total_seconds() / 60
                         if minutes_diff < 30:
                             is_new = False
+                            # Update existing item's radio_plays count
+                            item["radio_plays"] = item.get("radio_plays", 0) + 1
+                            item["timestamp"] = song["timestamp"]
                             break
                     except:
                         pass
@@ -146,32 +184,31 @@ class UgandaRadioScraper:
                     "source": "radio",
                     "external_id": f"radio_{song_id}",
                     "station": song["station"],
+                    "frequency": song.get("frequency", ""),
                     "artist": song["artist"],
                     "title": song["title"],
                     "radio_plays": 1,  # Each detection = 1 play
                     "timestamp": song["timestamp"],
+                    "published_at": song["timestamp"],  # For scoring time decay
                     "region": song["region"],
                     "ingested_at": datetime.utcnow().isoformat()
                 }
                 
-                # Calculate score
-                new_item["score"] = compute_score(new_item)
-                
-                all_items.append(new_item)
-                new_count += 1
+                new_items.append(new_item)
         
-        # Save all items
-        save_items(all_items)
+        # Add all new items to the database
+        all_items.extend(new_items)
         
-        # Update scoring
-        try:
-            from api.scoring.auto import safe_auto_recalculate
-            safe_auto_recalculate(all_items)
-        except Exception as e:
-            print(f"Scoring update failed: {e}")
+        # FIX: Use calculate_scores instead of compute_score per item
+        if new_items:
+            # Calculate scores for ALL items (ensures consistency)
+            calculate_scores(all_items)
+            # Save all items with updated scores
+            save_items(all_items)
         
         return {
             "found": len(songs),
-            "saved": new_count,
+            "saved": len(new_items),
+            "stations_scraped": len([s for s in self.stations if any(song["station"] == s["name"] for song in songs)]),
             "songs": songs[:3]  # Return first 3 as sample
         }
