@@ -1,94 +1,91 @@
-# data/store.py
-
+# /app/data/store.py
 import json
+import os
 from pathlib import Path
-from typing import Dict, List
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from typing import List, Dict, Any
+import logging
 
-EAT = ZoneInfo("Africa/Kampala")
+logger = logging.getLogger(__name__)
 
-STORE_FILE = Path("data/items.json")
+DATA_DIR = Path(__file__).parent
+ITEMS_FILE = DATA_DIR / "items.json"
 
-
-# -------------------------
-# Helpers
-# -------------------------
-
-def _now() -> str:
-    return datetime.now(EAT).isoformat()
-
-
-def _safe_read() -> List[Dict]:
-    if not STORE_FILE.exists():
-        return []
-
+def load_items() -> List[Dict[str, Any]]:
+    """Load all items from JSON file"""
     try:
-        data = json.loads(STORE_FILE.read_text())
-        return data if isinstance(data, list) else []
-    except Exception:
+        if ITEMS_FILE.exists():
+            with open(ITEMS_FILE, 'r', encoding='utf-8') as f:
+                items = json.load(f)
+                if isinstance(items, list):
+                    return items
+                else:
+                    logger.warning(f"{ITEMS_FILE} does not contain a list, returning empty")
+                    return []
+        else:
+            logger.info(f"{ITEMS_FILE} does not exist, returning empty list")
+            return []
+    except json.JSONDecodeError as e:
+        logger.error(f"Error decoding JSON from {ITEMS_FILE}: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Error loading items: {e}")
         return []
 
+def save_items(items: List[Dict[str, Any]]) -> bool:
+    """Save items to JSON file"""
+    try:
+        # Ensure data directory exists
+        DATA_DIR.mkdir(exist_ok=True)
+        
+        # Save items
+        with open(ITEMS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(items, f, indent=2, default=str)
+        
+        logger.info(f"Saved {len(items)} items to {ITEMS_FILE}")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving items: {e}")
+        return False
 
-def _atomic_write(data: List[Dict]) -> None:
-    STORE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STORE_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2))
-    tmp.replace(STORE_FILE)
+def upsert_item(new_item: Dict[str, Any]) -> bool:
+    """Insert or update an item in the store"""
+    try:
+        items = load_items()
+        
+        # Find existing item by unique identifier
+        item_id = new_item.get('id') or new_item.get('external_id')
+        if not item_id:
+            logger.warning("Item missing id or external_id, cannot upsert")
+            return False
+        
+        # Check if item exists
+        item_index = -1
+        for i, item in enumerate(items):
+            if item.get('id') == item_id or item.get('external_id') == item_id:
+                item_index = i
+                break
+        
+        if item_index >= 0:
+            # Update existing item
+            items[item_index].update(new_item)
+            logger.debug(f"Updated item: {item_id}")
+        else:
+            # Add new item
+            items.append(new_item)
+            logger.debug(f"Added new item: {item_id}")
+        
+        # Save back
+        return save_items(items)
+        
+    except Exception as e:
+        logger.error(f"Error upserting item: {e}")
+        return False
 
+# For backward compatibility with old imports
+def get_items() -> List[Dict[str, Any]]:
+    """Alias for load_items for backward compatibility"""
+    return load_items()
 
-# -------------------------
-# Public API (ENGINE CONTRACT)
-# -------------------------
-
-def load_items() -> List[Dict]:
-    """
-    Read-only load for charts.
-    """
-    return _safe_read()
-
-
-def upsert_item(item: Dict) -> Dict:
-    """
-    Idempotent insert/update.
-
-    Uniqueness key:
-    - source
-    - external_id
-
-    Behavior:
-    - If exists → update signals + updated_at
-    - If new → insert with created_at
-    """
-    if not isinstance(item, dict):
-        raise ValueError("Invalid item payload")
-
-    source = item.get("source")
-    external_id = item.get("external_id")
-
-    if not source or not external_id:
-        raise ValueError("Item must have source and external_id")
-
-    items = _safe_read()
-
-    for existing in items:
-        if (
-            existing.get("source") == source
-            and existing.get("external_id") == external_id
-        ):
-            # 🔁 UPDATE (idempotent)
-            existing.update(item)
-            existing["updated_at"] = _now()
-            _atomic_write(items)
-            return existing
-
-    # ➕ INSERT (new)
-    record = {
-        **item,
-        "created_at": _now(),
-        "updated_at": _now(),
-    }
-
-    items.append(record)
-    _atomic_write(items)
-    return record
+def store_items(items: List[Dict[str, Any]]) -> bool:
+    """Alias for save_items for backward compatibility"""
+    return save_items(items)
