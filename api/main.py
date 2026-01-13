@@ -382,9 +382,9 @@ def build_region_chart(
         }
         
         # ===========================================
-        # FIX 2: Pass REGION (string), not snapshot_data (dict)
+        # FIX 2: Pass BOTH region AND snapshot_data
         # ===========================================
-        save_region_snapshot(region)  # ← FIXED! Pass region string
+        save_region_snapshot(region, snapshot_data)  # ← FIXED! Pass both parameters
         
         # 8. Lock region
         lock_region(region)
@@ -569,9 +569,9 @@ def publish_all_regions(
                 }
                 
                 # ===========================================
-                # FIX 4: Pass REGION (string), not snapshot_data (dict)
+                # FIX 4: Pass BOTH region AND snapshot_data
                 # ===========================================
-                save_region_snapshot(region)  # ← FIXED! Pass region string
+                save_region_snapshot(region, snapshot_data)  # ← FIXED! Pass both parameters
                 lock_region(region)
                 
                 results.append({
