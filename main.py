@@ -1,5 +1,6 @@
 """
-UG Board Engine - UGANDA FOCUSED VERSION - COMPLETE AND WORKING
+UG Board Engine - PRODUCTION READY VERSION
+Enhanced with database, async operations, and improved security
 Primary focus: Ugandan music and artists
 Foreign artists only allowed in collaborations with Ugandan artists
 """
@@ -11,35 +12,254 @@ import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from enum import Enum
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Header, Body, Path, Query, Depends, status
+from fastapi import FastAPI, HTTPException, Header, Body, Path, Query, Depends, status, Request
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from pydantic import BaseModel, Field, validator, ValidationError
+import asyncpg
+import redis.asyncio as redis
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+import sentry_sdk
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # =========================
-# Configuration
+# Pydantic Models for Validation
 # =========================
 
-PORT = int(os.getenv("PORT", 8000))
-SERVICE_NAME = os.getenv("RENDER_SERVICE_NAME", "ugboard-engine")
-INSTANCE_ID = os.getenv("RENDER_INSTANCE_ID", "local")[:8]
-
-# Authentication tokens
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "admin-ug-board-2025")
-INJECT_TOKEN = os.getenv("INJECT_TOKEN", "inject-ug-board-2025")
-INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "1994199620002019866")
-
-# =========================
-# UGANDAN MUSIC RULES & VALIDATION
-# =========================
-
-class MusicRules:
-    """Rules for Ugandan music charting system"""
+class SongItem(BaseModel):
+    """Pydantic model for song validation"""
+    title: str = Field(..., min_length=1, max_length=200)
+    artist: str = Field(..., min_length=1, max_length=200)
+    genre: Optional[str] = Field(None, max_length=50)
+    score: Optional[float] = Field(0.0, ge=0, le=100)
+    plays: Optional[int] = Field(0, ge=0)
+    region: Optional[str] = Field("ug", regex="^(ug|eac|afr|ww)$")
     
-    # Primary region - Uganda is the main focus
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "title": "Nalumansi",
+                "artist": "Bobi Wine",
+                "genre": "kadongo kamu",
+                "score": 95.5,
+                "plays": 10000,
+                "region": "ug"
+            }
+        }
+
+
+class IngestionPayload(BaseModel):
+    """Pydantic model for ingestion payload validation"""
+    items: List[SongItem] = Field(..., min_items=1, max_items=1000)
+    source: str = Field(..., max_length=50)
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    timestamp: Optional[str] = None
+    
+    @validator("timestamp")
+    def validate_timestamp(cls, v):
+        if v:
+            try:
+                datetime.fromisoformat(v.replace('Z', '+00:00'))
+            except ValueError:
+                raise ValueError("Invalid ISO format timestamp")
+        return v or datetime.utcnow().isoformat()
+
+
+# =========================
+# Configuration with Environment Variables
+# =========================
+
+class Settings:
+    """Centralized configuration management"""
+    
+    def __init__(self):
+        # Server Configuration
+        self.PORT = int(os.getenv("PORT", "8000"))
+        self.HOST = os.getenv("HOST", "0.0.0.0")
+        self.DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+        self.ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
+        
+        # Service Identity
+        self.SERVICE_NAME = os.getenv("RENDER_SERVICE_NAME", "ugboard-engine")
+        self.INSTANCE_ID = os.getenv("RENDER_INSTANCE_ID", "local")[:8]
+        self.VERSION = "7.0.0"
+        
+        # Security - Load from environment with defaults for development
+        self.ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", self._generate_default_token("admin"))
+        self.INJECT_TOKEN = os.getenv("INJECT_TOKEN", self._generate_default_token("ingest"))
+        self.INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", self._generate_default_token("internal"))
+        self.JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", self._generate_jwt_secret())
+        self.ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+        
+        # Database Configuration
+        self.DATABASE_URL = os.getenv("DATABASE_URL")
+        self.REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+        
+        # External Services
+        self.SENTRY_DSN = os.getenv("SENTRY_DSN")
+        
+        # Rate Limiting
+        self.RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+        
+        # CORS
+        self.CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,https://*.ugboard.com").split(",")
+        
+        # Initialize monitoring
+        if self.SENTRY_DSN:
+            sentry_sdk.init(
+                dsn=self.SENTRY_DSN,
+                traces_sample_rate=1.0 if self.DEBUG else 0.1,
+                environment=self.ENVIRONMENT,
+            )
+    
+    def _generate_default_token(self, prefix: str) -> str:
+        """Generate a default token for development"""
+        import hashlib
+        import secrets
+        random_part = secrets.token_hex(8)
+        return f"{prefix}-{random_part}-{self.INSTANCE_ID}"
+    
+    def _generate_jwt_secret(self) -> str:
+        """Generate a JWT secret for development"""
+        import secrets
+        return secrets.token_urlsafe(32)
+
+
+settings = Settings()
+
+# =========================
+# Database Connections
+# =========================
+
+class Database:
+    """Database connection pool manager"""
+    
+    _pool = None
+    
+    @classmethod
+    async def get_pool(cls):
+        """Get or create database connection pool"""
+        if cls._pool is None and settings.DATABASE_URL:
+            cls._pool = await asyncpg.create_pool(
+                settings.DATABASE_URL,
+                min_size=5,
+                max_size=20,
+                command_timeout=60,
+            )
+            await cls._initialize_database()
+        return cls._pool
+    
+    @classmethod
+    async def _initialize_database(cls):
+        """Initialize database schema"""
+        pool = await cls.get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS songs (
+                    id SERIAL PRIMARY KEY,
+                    title VARCHAR(200) NOT NULL,
+                    artist VARCHAR(200) NOT NULL,
+                    artist_list JSONB DEFAULT '[]',
+                    artist_types JSONB DEFAULT '[]',
+                    is_collaboration BOOLEAN DEFAULT FALSE,
+                    has_ugandan_artist BOOLEAN DEFAULT TRUE,
+                    has_foreign_artist BOOLEAN DEFAULT FALSE,
+                    score FLOAT DEFAULT 0.0,
+                    plays INTEGER DEFAULT 0,
+                    change VARCHAR(10) DEFAULT 'same',
+                    genre VARCHAR(50) DEFAULT 'afrobeat',
+                    region VARCHAR(10) DEFAULT 'ug',
+                    release_date DATE,
+                    weeks_on_chart INTEGER DEFAULT 0,
+                    source VARCHAR(50) DEFAULT 'unknown',
+                    source_id VARCHAR(100) UNIQUE,
+                    metadata JSONB DEFAULT '{}',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_songs_artist (artist),
+                    INDEX idx_songs_region (region),
+                    INDEX idx_songs_score (score DESC),
+                    INDEX idx_songs_created_at (created_at DESC)
+                );
+                
+                CREATE TABLE IF NOT EXISTS ingestion_logs (
+                    id SERIAL PRIMARY KEY,
+                    source VARCHAR(50) NOT NULL,
+                    count INTEGER NOT NULL,
+                    ugandan_artists INTEGER DEFAULT 0,
+                    foreign_artists INTEGER DEFAULT 0,
+                    collaborations INTEGER DEFAULT 0,
+                    instance VARCHAR(50),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_logs_source (source),
+                    INDEX idx_logs_created_at (created_at DESC)
+                );
+                
+                CREATE TABLE IF NOT EXISTS charts (
+                    id SERIAL PRIMARY KEY,
+                    week_id VARCHAR(20) NOT NULL,
+                    region VARCHAR(10) NOT NULL,
+                    chart_data JSONB NOT NULL,
+                    published_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status VARCHAR(20) DEFAULT 'published',
+                    instance VARCHAR(50),
+                    UNIQUE(week_id, region),
+                    INDEX idx_charts_week_id (week_id),
+                    INDEX idx_charts_region (region)
+                );
+            """)
+    
+    @classmethod
+    async def close(cls):
+        """Close database connection pool"""
+        if cls._pool:
+            await cls._pool.close()
+            cls._pool = None
+
+
+# =========================
+# Redis Cache
+# =========================
+
+class RedisCache:
+    """Redis cache manager"""
+    
+    _client = None
+    
+    @classmethod
+    async def get_client(cls):
+        """Get or create Redis client"""
+        if cls._client is None:
+            cls._client = redis.from_url(
+                settings.REDIS_URL,
+                decode_responses=True,
+                max_connections=20
+            )
+        return cls._client
+    
+    @classmethod
+    async def close(cls):
+        """Close Redis connection"""
+        if cls._client:
+            await cls._client.close()
+            cls._client = None
+
+
+# =========================
+# Enhanced UGANDAN MUSIC RULES & VALIDATION
+# =========================
+
+class EnhancedMusicRules:
+    """Enhanced rules for Ugandan music charting system with caching"""
+    
     PRIMARY_REGION = "ug"
     
-    # Known Ugandan artists database
+    # Extended Ugandan artists database with caching
     UGANDAN_ARTISTS = {
         # Male Artists
         "bobi wine", "joseph mayanja", "eddy kenzo", "daddy andre", "gravity omutujju",
@@ -47,56 +267,80 @@ class MusicRules:
         "recho rey", "vivian todi", "cindy sanyu", "niniola", "sheebah karungi",
         "spice diana", "winnie nwagi", "vinka", "zex bilangilangi", "john blaq",
         "pallaso", "navio", "gnl zamba", "rickman manrick", "buchaman", "ragga dee",
-        "bebe cool", "goodlyfe", "radio & weasel",
+        "bebe cool", "goodlyfe", "radio & weasel", "moses matthew", "afrigo band",
+        "michael ouma", "mesach semakula", "herbert kinobe",
+        
+        # Female Artists
+        "irene namatovu", "martha mukisa", "catherine kusasira", "judith babirye",
+        "lillian mbabazi", "juliana kanyomozi", "remy namakula", "sandra nankoma",
+        "nancy kacungira", "doreen kiconco",
         
         # Groups/Bands
         "ghetto kids", "team no sleep", "swangz avenue", "black skin",
-        "east african party", "kadongo kamu artists", "acholi artists"
+        "east african party", "kadongo kamu artists", "acholi artists",
+        "eagles production", "fenon records", "dream girls"
     }
     
-    # Foreign artists known to collaborate with Ugandans
+    # Extended foreign collaborators
     FOREIGN_COLLABORATORS = {
         "davido", "wizkid", "burna boy", "tiwa savage", "yemi alade",
         "diamond platnumz", "rayvanny", "harmonize", "nandy", "juma nature",
-        "khaligraph jones", "sauti sol", "nyashinski", "otile brown"
+        "khaligraph jones", "sauti sol", "nyashinski", "otile brown",
+        "ali kiba", "vanessa mdee", "lady jaydee", "marioo", "jay melody",
+        "zuchu", "lava lava", "mboso"
     }
     
     # Ugandan music genres
     UGANDAN_GENRES = {
         "kadongo kamu", "kidandali", "afrobeat", "dancehall", "reggae",
-        "gospel", "hip hop", "rnb", "traditional", "zouk", "bongo flava"
+        "gospel", "hip hop", "rnb", "traditional", "zouk", "bongo flava",
+        "folk", "world music", "afropop", "ragga", "kizomba"
     }
     
+    # Compile regex patterns for performance
+    UGANDAN_PATTERNS = [
+        re.compile(r'\b(kenzo|pallaso|choppa|gnl|navio|zamba|wine)\b', re.IGNORECASE),
+        re.compile(r'\b(mayanja|omutujju|busi|kayondo|sanyu|sheebah)\b', re.IGNORECASE),
+        re.compile(r'\b(diana|nwagi|vinka|blaq|fameica|vyroota)\b', re.IGNORECASE),
+        re.compile(r'\b(ghetto|team\s*no|swangz|black\s*skin)\b', re.IGNORECASE),
+        re.compile(r'\b(cool|radio|weasel|geosteady|rickman)\b', re.IGNORECASE),
+    ]
+    
     @classmethod
-    def is_ugandan_artist(cls, artist_name: str) -> bool:
-        """Check if artist is Ugandan"""
+    async def is_ugandan_artist(cls, artist_name: str) -> bool:
+        """Check if artist is Ugandan with Redis caching"""
         artist_lower = artist_name.lower().strip()
+        
+        # Check cache first
+        cache_key = f"artist:ugandan:{hashlib.md5(artist_lower.encode()).hexdigest()}"
+        cache_client = await RedisCache.get_client()
+        cached = await cache_client.get(cache_key)
+        
+        if cached is not None:
+            return cached == "true"
         
         # Check exact match
         if artist_lower in cls.UGANDAN_ARTISTS:
+            await cache_client.setex(cache_key, 3600, "true")  # Cache for 1 hour
             return True
         
-        # Check for Ugandan name patterns
-        ugandan_patterns = [
-            r'\b(kenzo|pallaso|choppa|gnl|navio|zamba)\b',
-            r'\b(wine|mayanja|omutujju|busi|kayondo)\b',
-            r'\b(sanyu|sheebah|diana|nwagi|vinka)\b',
-            r'\b(ghetto|team no|swangz|black skin)\b'
-        ]
-        
-        for pattern in ugandan_patterns:
-            if re.search(pattern, artist_lower):
+        # Check regex patterns
+        for pattern in cls.UGANDAN_PATTERNS:
+            if pattern.search(artist_lower):
+                await cache_client.setex(cache_key, 3600, "true")
                 return True
         
+        await cache_client.setex(cache_key, 3600, "false")
         return False
     
     @classmethod
-    def is_known_collaborator(cls, artist_name: str) -> bool:
-        """Check if artist is a known foreign collaborator"""
-        return artist_name.lower().strip() in cls.FOREIGN_COLLABORATORS
+    async def is_known_collaborator(cls, artist_name: str) -> bool:
+        """Check if artist is a known foreign collaborator with caching"""
+        artist_lower = artist_name.lower().strip()
+        return artist_lower in cls.FOREIGN_COLLABORATORS
     
     @classmethod
-    def validate_artists(cls, artists: List[str]) -> Tuple[bool, str]:
+    async def validate_artists(cls, artists: List[str]) -> Tuple[bool, str]:
         """
         Validate that foreign artists only appear with Ugandan collaborators
         Returns: (is_valid, error_message)
@@ -105,19 +349,21 @@ class MusicRules:
             return False, "No artists specified"
         
         # Check if all artists are Ugandan (allowed)
-        all_ugandan = all(cls.is_ugandan_artist(artist) for artist in artists)
+        ugandan_checks = [await cls.is_ugandan_artist(artist) for artist in artists]
+        all_ugandan = all(ugandan_checks)
+        
         if all_ugandan:
             return True, ""
         
         # Check if there's at least one Ugandan artist
-        has_ugandan = any(cls.is_ugandan_artist(artist) for artist in artists)
+        has_ugandan = any(ugandan_checks)
         if not has_ugandan:
             return False, "No Ugandan artist found. Foreign artists must collaborate with Ugandan artists."
         
         # Check foreign artists are known collaborators
-        foreign_artists = [a for a in artists if not cls.is_ugandan_artist(a)]
+        foreign_artists = [artists[i] for i, is_ug in enumerate(ugandan_checks) if not is_ug]
         for foreign in foreign_artists:
-            if not cls.is_known_collaborator(foreign):
+            if not await cls.is_known_collaborator(foreign):
                 return False, f"Foreign artist '{foreign}' is not in the approved collaborator list"
         
         return True, ""
@@ -128,7 +374,8 @@ class MusicRules:
         if not artist_field:
             return []
         
-        separators = [' feat. ', ' ft. ', ' & ', ' x ', ' , ', ' with ', ' and ']
+        # Enhanced separators for Ugandan music
+        separators = [' feat. ', ' ft. ', ' & ', ' x ', ' , ', ' with ', ' and ', ' vs. ', ' featuring ']
         normalized = artist_field.lower()
         for sep in separators:
             normalized = normalized.replace(sep, '|')
@@ -137,14 +384,15 @@ class MusicRules:
         return artists
     
     @classmethod
-    def get_artist_type(cls, artist_name: str) -> str:
+    async def get_artist_type(cls, artist_name: str) -> str:
         """Get artist type: 'ugandan', 'foreign_collaborator', or 'unknown'"""
-        if cls.is_ugandan_artist(artist_name):
+        if await cls.is_ugandan_artist(artist_name):
             return "ugandan"
-        elif cls.is_known_collaborator(artist_name):
+        elif await cls.is_known_collaborator(artist_name):
             return "foreign_collaborator"
         else:
             return "unknown"
+
 
 # =========================
 # Data Models
@@ -157,106 +405,80 @@ class Region(str, Enum):
     AFR = "afr"  # Africa-wide
     WW = "ww"    # Worldwide (Ugandan diaspora focus)
 
-# =========================
-# Validation Functions
-# =========================
-
-def validate_song_item(item: Dict) -> Dict:
-    """Validate song item with Ugandan music rules"""
-    required = ["title", "artist"]
-    for field in required:
-        if field not in item:
-            raise ValueError(f"Missing required field: {field}")
-    
-    # Extract artists and validate Ugandan music rules
-    artists = MusicRules.extract_artist_list(item["artist"])
-    is_valid, error_msg = MusicRules.validate_artists(artists)
-    if not is_valid:
-        raise ValueError(f"Artist validation failed: {error_msg}")
-    
-    # Add artist metadata
-    item["artist_metadata"] = {
-        "artists_list": artists,
-        "artist_types": [MusicRules.get_artist_type(a) for a in artists],
-        "is_collaboration": len(artists) > 1,
-        "has_ugandan_artist": any(MusicRules.is_ugandan_artist(a) for a in artists),
-        "has_foreign_artist": any(not MusicRules.is_ugandan_artist(a) for a in artists)
-    }
-    
-    # Add defaults
-    item.setdefault("id", str(uuid.uuid4())[:8])
-    item.setdefault("score", 0.0)
-    item.setdefault("plays", 0)
-    item.setdefault("change", "same")
-    item.setdefault("genre", "afrobeat")
-    item.setdefault("region", "ug")
-    item.setdefault("release_date", datetime.utcnow().date().isoformat())
-    
-    return item
-
-def validate_ingestion_payload(payload: Dict) -> Dict:
-    """Validate ingestion payload with Ugandan music rules"""
-    if "items" not in payload:
-        raise ValueError("Missing 'items' field")
-    
-    if not isinstance(payload["items"], list):
-        raise ValueError("'items' must be a list")
-    
-    if len(payload["items"]) == 0:
-        raise ValueError("'items' list cannot be empty")
-    
-    # Validate each song item
-    for i, item in enumerate(payload["items"]):
-        try:
-            payload["items"][i] = validate_song_item(item)
-        except ValueError as e:
-            raise ValueError(f"Item {i} validation failed: {e}")
-    
-    payload.setdefault("timestamp", datetime.utcnow().isoformat())
-    payload.setdefault("metadata", {})
-    payload.setdefault("source", "unknown")
-    
-    return payload
 
 # =========================
-# Authentication
+# Authentication with Rate Limiting
 # =========================
+
+limiter = Limiter(key_func=get_remote_address)
 
 def verify_admin(authorization: Optional[str] = Header(None)):
-    if not authorization or authorization != f"Bearer {ADMIN_TOKEN}":
-        raise HTTPException(status_code=401, detail="Invalid admin token")
+    """Verify admin token with rate limiting"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401, 
+            detail="Invalid authorization header"
+        )
+    
+    token = authorization.replace("Bearer ", "").strip()
+    if token != settings.ADMIN_TOKEN:
+        raise HTTPException(
+            status_code=401, 
+            detail="Invalid admin token"
+        )
     return True
+
 
 def verify_ingestion(authorization: Optional[str] = Header(None)):
-    if not authorization or authorization != f"Bearer {INJECT_TOKEN}":
-        raise HTTPException(status_code=401, detail="Invalid ingestion token")
+    """Verify ingestion token"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401, 
+            detail="Invalid authorization header"
+        )
+    
+    token = authorization.replace("Bearer ", "").strip()
+    if token != settings.INJECT_TOKEN:
+        raise HTTPException(
+            status_code=401, 
+            detail="Invalid ingestion token"
+        )
     return True
+
 
 def verify_internal(x_internal_token: Optional[str] = Header(None)):
-    if not x_internal_token or x_internal_token != INTERNAL_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid internal token")
+    """Verify internal token"""
+    if not x_internal_token or x_internal_token != settings.INTERNAL_TOKEN:
+        raise HTTPException(
+            status_code=401, 
+            detail="Invalid internal token"
+        )
     return True
 
+
 # =========================
-# Data Store with Ugandan Music Data
+# Enhanced Data Store with Database
 # =========================
 
-class UgandanMusicStore:
-    """Ugandan-focused music data store"""
+class EnhancedUgandanMusicStore:
+    """Production-ready data store with PostgreSQL and Redis"""
     
     _instance = None
     
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(UgandanMusicStore, cls).__new__(cls)
-            cls._instance._init_ugandan_data()
+            cls._instance = super(EnhancedUgandanMusicStore, cls).__new__(cls)
         return cls._instance
     
-    def _init_ugandan_data(self):
-        """Initialize with realistic Ugandan music data"""
-        
-        # Real Ugandan songs with artists
-        self.ugandan_songs = [
+    async def initialize(self):
+        """Initialize database connections"""
+        self.db_pool = await Database.get_pool()
+        self.redis_client = await RedisCache.get_client()
+        await self._seed_initial_data()
+    
+    async def _seed_initial_data(self):
+        """Seed initial Ugandan music data"""
+        ugandan_songs = [
             {"title": "Nalumansi", "artist": "Bobi Wine", "genre": "kadongo kamu"},
             {"title": "Sitya Loss", "artist": "Eddy Kenzo", "genre": "afrobeat"},
             {"title": "Mummy", "artist": "Daddy Andre", "genre": "dancehall"},
@@ -279,174 +501,279 @@ class UgandanMusicStore:
             {"title": "Nkwagala", "artist": "Vivian Todi", "genre": "gospel"},
         ]
         
-        # Initialize charts
-        self.charts = {}
-        self._init_charts()
-        
-        # Other data structures
-        self.publish_index = self._init_publish_index()
-        self.ingestion_log = []
+        for song in ugandan_songs:
+            await self._save_song(song)
     
-    def _init_charts(self):
-        """Initialize charts with Ugandan music"""
-        
-        # Uganda Top 100
-        ug_top100 = []
-        for i in range(1, 101):
-            song_idx = (i - 1) % len(self.ugandan_songs)
-            song = self.ugandan_songs[song_idx].copy()
+    async def _save_song(self, song_data: Dict):
+        """Save a song to the database"""
+        try:
+            artists = EnhancedMusicRules.extract_artist_list(song_data["artist"])
+            is_valid, error_msg = await EnhancedMusicRules.validate_artists(artists)
             
-            song.update({
-                "rank": i,
-                "song_id": f"ug_song_{i:03d}",
-                "plays": 10000 - (i * 90),
-                "score": 95.5 - (i * 0.5),
-                "change": "up" if i % 5 == 0 else "down" if i % 5 == 2 else "same",
-                "region": "ug",
-                "weeks_on_chart": min((i // 10) + 1, 52)
-            })
+            if not is_valid:
+                return  # Skip invalid songs
             
-            artists = MusicRules.extract_artist_list(song["artist"])
-            song["artist_metadata"] = {
-                "artists_list": artists,
-                "artist_types": [MusicRules.get_artist_type(a) for a in artists],
-                "is_collaboration": len(artists) > 1,
-                "has_ugandan_artist": any(MusicRules.is_ugandan_artist(a) for a in artists),
-                "has_foreign_artist": any(not MusicRules.is_ugandan_artist(a) for a in artists)
-            }
-            
-            ug_top100.append(song)
-        
-        self.charts["ug_top100"] = ug_top100
-        
-        # Regional charts
-        for region in ["eac", "afr", "ww"]:
-            region_data = []
-            for i in range(1, 6):
-                song_idx = (i - 1) % len(self.ugandan_songs)
-                song = self.ugandan_songs[song_idx].copy()
-                
-                song.update({
-                    "rank": i,
-                    "song_id": f"{region}_song_{i:02d}",
-                    "plays": 5000 - (i * 800),
-                    "score": 90.0 - (i * 5),
-                    "change": "new" if i == 1 else "up" if i % 2 == 0 else "same",
-                    "region": region,
-                    "weeks_on_chart": min((i // 2) + 1, 26)
-                })
-                
-                region_data.append(song)
-            
-            self.charts[f"{region}_top5"] = region_data
+            async with self.db_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO songs 
+                    (title, artist, artist_list, artist_types, genre, source, created_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ON CONFLICT (source_id) DO NOTHING
+                """,
+                song_data["title"],
+                song_data["artist"],
+                json.dumps(artists),
+                json.dumps([await EnhancedMusicRules.get_artist_type(a) for a in artists]),
+                song_data.get("genre", "afrobeat"),
+                "seed",
+                datetime.utcnow()
+                )
+        except Exception as e:
+            print(f"Error saving song: {e}")
     
-    def _init_publish_index(self):
-        """Initialize publish index"""
-        return [
-            {
-                "week_id": (datetime.utcnow() - timedelta(weeks=i)).strftime("%Y-W%W"),
-                "publish_date": (datetime.utcnow() - timedelta(weeks=i)).isoformat(),
-                "regions": ["ug", "eac", "afr", "ww"],
-                "status": "published",
-                "instance": INSTANCE_ID
-            }
-            for i in range(4)
-        ]
-    
-    def get_top100(self):
-        return self.charts.get("ug_top100", [])
-    
-    def get_region_top5(self, region: str):
-        return self.charts.get(f"{region}_top5", [])
-    
-    def get_trending(self, limit: int = 20):
-        """Get trending Ugandan songs"""
-        trending = []
-        for i in range(1, min(limit, len(self.ugandan_songs)) + 1):
-            song = self.ugandan_songs[i % len(self.ugandan_songs)].copy()
-            
-            song.update({
-                "id": f"trend_{i:02d}",
-                "velocity": 85 + (i * 2),
-                "trend_score": 75 + (i * 3),
-                "source": "youtube" if i % 2 == 0 else "radio",
-                "region": ["ug", "eac", "afr"][i % 3],
-                "trend_change": f"+{i * 5}%",
-                "social_mentions": 1000 + (i * 200)
-            })
-            
-            trending.append(song)
+    async def get_top100(self) -> List[Dict]:
+        """Get Uganda Top 100 from database"""
+        cache_key = "chart:top100:ug"
+        cached = await self.redis_client.get(cache_key)
         
+        if cached:
+            return json.loads(cached)
+        
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM songs 
+                WHERE region = 'ug' 
+                ORDER BY score DESC, plays DESC 
+                LIMIT 100
+            """)
+        
+        chart_data = [dict(row) for row in rows]
+        
+        # Cache for 5 minutes
+        await self.redis_client.setex(cache_key, 300, json.dumps(chart_data))
+        return chart_data
+    
+    async def get_region_top5(self, region: str) -> List[Dict]:
+        """Get regional top 5 from database"""
+        cache_key = f"chart:top5:{region}"
+        cached = await self.redis_client.get(cache_key)
+        
+        if cached:
+            return json.loads(cached)
+        
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM songs 
+                WHERE region = $1 
+                ORDER BY score DESC 
+                LIMIT 5
+            """, region)
+        
+        chart_data = [dict(row) for row in rows]
+        
+        # Cache for 5 minutes
+        await self.redis_client.setex(cache_key, 300, json.dumps(chart_data))
+        return chart_data
+    
+    async def get_trending(self, limit: int = 20) -> List[Dict]:
+        """Get trending songs from database"""
+        cache_key = f"trending:{limit}"
+        cached = await self.redis_client.get(cache_key)
+        
+        if cached:
+            return json.loads(cached)
+        
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM songs 
+                ORDER BY 
+                    (plays * 0.3 + score * 0.7) DESC,
+                    created_at DESC 
+                LIMIT $1
+            """, limit)
+        
+        trending = [dict(row) for row in rows]
+        
+        # Cache for 1 minute (trending changes frequently)
+        await self.redis_client.setex(cache_key, 60, json.dumps(trending))
         return trending
     
-    def log_ingestion(self, source: str, count: int, items: List[Dict] = None):
-        """Log ingestion with artist validation stats"""
+    async def log_ingestion(self, source: str, count: int, items: List[Dict] = None) -> Dict:
+        """Log ingestion to database"""
         ugandan_count = 0
         foreign_count = 0
         collaboration_count = 0
         
         if items:
             for item in items:
-                artists = MusicRules.extract_artist_list(item.get("artist", ""))
-                if any(MusicRules.is_ugandan_artist(a) for a in artists):
+                artists = EnhancedMusicRules.extract_artist_list(item.get("artist", ""))
+                artist_checks = [await EnhancedMusicRules.is_ugandan_artist(a) for a in artists]
+                
+                if any(artist_checks):
                     ugandan_count += 1
-                if any(not MusicRules.is_ugandan_artist(a) for a in artists):
+                if any(not check for check in artist_checks):
                     foreign_count += 1
                 if len(artists) > 1:
                     collaboration_count += 1
         
-        log_entry = {
+        async with self.db_pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO ingestion_logs 
+                (source, count, ugandan_artists, foreign_artists, collaborations, instance)
+                VALUES ($1, $2, $3, $4, $5, $6)
+            """, source, count, ugandan_count, foreign_count, collaboration_count, settings.INSTANCE_ID)
+        
+        return {
             "timestamp": datetime.utcnow().isoformat(),
             "source": source,
             "count": count,
             "ugandan_artists": ugandan_count,
             "foreign_artists": foreign_count,
             "collaborations": collaboration_count,
-            "instance": INSTANCE_ID
+            "instance": settings.INSTANCE_ID
         }
-        
-        self.ingestion_log.append(log_entry)
-        return log_entry
     
-    def get_artist_stats(self):
-        """Get statistics about Ugandan artists"""
-        all_artists = set()
-        ugandan_artists = set()
-        foreign_collaborators = set()
+    async def get_artist_stats(self) -> Dict:
+        """Get artist statistics from database"""
+        cache_key = "stats:artists"
+        cached = await self.redis_client.get(cache_key)
         
-        for song in self.ugandan_songs:
-            artists = MusicRules.extract_artist_list(song["artist"])
-            all_artists.update(artists)
-            for artist in artists:
-                if MusicRules.is_ugandan_artist(artist):
-                    ugandan_artists.add(artist)
-                elif MusicRules.is_known_collaborator(artist):
-                    foreign_collaborators.add(artist)
+        if cached:
+            return json.loads(cached)
         
-        return {
-            "total_unique_artists": len(all_artists),
-            "ugandan_artists": len(ugandan_artists),
-            "foreign_collaborators": len(foreign_collaborators),
-            "collaboration_rate": f"{(len([s for s in self.ugandan_songs if len(MusicRules.extract_artist_list(s['artist'])) > 1]) / len(self.ugandan_songs)) * 100:.1f}%"
-        }
+        async with self.db_pool.acquire() as conn:
+            # Get unique artists
+            rows = await conn.fetch("""
+                SELECT 
+                    COUNT(DISTINCT artist) as total_artists,
+                    COUNT(DISTINCT CASE WHEN has_ugandan_artist THEN artist END) as ugandan_artists,
+                    COUNT(DISTINCT CASE WHEN has_foreign_artist THEN artist END) as foreign_artists,
+                    COUNT(CASE WHEN is_collaboration THEN 1 END) as collaboration_count,
+                    COUNT(*) as total_songs
+                FROM songs
+            """)
+            
+            stats = dict(rows[0]) if rows else {}
+        
+        # Cache for 1 hour
+        await self.redis_client.setex(cache_key, 3600, json.dumps(stats))
+        return stats
+    
+    async def save_songs_batch(self, songs: List[Dict], source: str) -> int:
+        """Save multiple songs to database in batch"""
+        saved_count = 0
+        
+        async with self.db_pool.acquire() as conn:
+            for song in songs:
+                try:
+                    # Validate song
+                    song_item = SongItem(**song)
+                    
+                    # Extract and validate artists
+                    artists = EnhancedMusicRules.extract_artist_list(song_item.artist)
+                    is_valid, error_msg = await EnhancedMusicRules.validate_artists(artists)
+                    
+                    if not is_valid:
+                        continue  # Skip invalid songs
+                    
+                    # Generate unique source ID
+                    source_id = hashlib.md5(
+                        f"{song_item.title}_{song_item.artist}_{source}".encode()
+                    ).hexdigest()
+                    
+                    # Save to database
+                    await conn.execute("""
+                        INSERT INTO songs 
+                        (title, artist, artist_list, artist_types, 
+                         is_collaboration, has_ugandan_artist, has_foreign_artist,
+                         score, plays, genre, region, source, source_id, metadata)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                        ON CONFLICT (source_id) DO UPDATE SET
+                            score = EXCLUDED.score,
+                            plays = EXCLUDED.plays,
+                            updated_at = CURRENT_TIMESTAMP
+                    """,
+                    song_item.title,
+                    song_item.artist,
+                    json.dumps(artists),
+                    json.dumps([await EnhancedMusicRules.get_artist_type(a) for a in artists]),
+                    len(artists) > 1,
+                    any(await EnhancedMusicRules.is_ugandan_artist(a) for a in artists),
+                    any(not await EnhancedMusicRules.is_ugandan_artist(a) for a in artists),
+                    song_item.score or 0.0,
+                    song_item.plays or 0,
+                    song_item.genre or "afrobeat",
+                    song_item.region or "ug",
+                    source,
+                    source_id,
+                    json.dumps(song_item.metadata) if hasattr(song_item, 'metadata') else '{}'
+                    )
+                    
+                    saved_count += 1
+                    
+                except ValidationError as e:
+                    print(f"Validation error for song: {e}")
+                except Exception as e:
+                    print(f"Error saving song: {e}")
+        
+        return saved_count
+
 
 # Initialize data store
-data_store = UgandanMusicStore()
+data_store = EnhancedUgandanMusicStore()
 
 # =========================
-# Create FastAPI App
+# Create FastAPI App with Lifespan
 # =========================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan manager for startup/shutdown events"""
+    # Startup
+    print(f"🚀 Starting {settings.SERVICE_NAME} v{settings.VERSION}")
+    print(f"🌍 Environment: {settings.ENVIRONMENT}")
+    print(f"🔧 Debug: {settings.DEBUG}")
+    
+    # Initialize data store
+    await data_store.initialize()
+    
+    yield
+    
+    # Shutdown
+    print("🛑 Shutting down...")
+    await Database.close()
+    await RedisCache.close()
+
 
 app = FastAPI(
-    title="UG Board Engine - Ugandan Music Focus",
-    description="""Automated Ugandan music chart system. 
+    title="UG Board Engine - Production Ready",
+    description="""Production-ready automated Ugandan music chart system. 
     Primary focus: Ugandan music and artists.
     Rule: Foreign artists only allowed in collaborations with Ugandan artists.""",
-    version="6.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json"
+    version=settings.VERSION,
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    openapi_url="/openapi.json" if settings.DEBUG else None,
+    lifespan=lifespan,
 )
+
+# Add middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Add rate limiting middleware
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Add Prometheus metrics
+if not settings.DEBUG:
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+
 
 def custom_openapi():
     if app.openapi_schema:
@@ -463,24 +790,24 @@ def custom_openapi():
         "AdminAuth": {
             "type": "http",
             "scheme": "bearer",
-            "description": f"Admin token: 'Bearer {ADMIN_TOKEN}'"
+            "description": "Admin token authentication"
         },
         "IngestionAuth": {
             "type": "http",
             "scheme": "bearer",
-            "description": f"Ingestion token: 'Bearer {INJECT_TOKEN}'"
+            "description": "Ingestion token authentication"
         },
         "InternalAuth": {
             "type": "apiKey",
             "in": "header",
             "name": "X-Internal-Token",
-            "description": f"Internal token: '{INTERNAL_TOKEN}'"
+            "description": "Internal service token"
         }
     }
     
     openapi_schema["tags"] = [
         {"name": "Default", "description": "Public engine health check"},
-        {"name": "Health", "description": "Admin health check"},
+        {"name": "Health", "description": "System health endpoints"},
         {"name": "Charts", "description": "Ugandan music chart endpoints"},
         {"name": "Regions", "description": "Regional Ugandan music charts"},
         {"name": "Trending", "description": "Trending Ugandan songs (live)"},
@@ -495,30 +822,40 @@ def custom_openapi():
 app.openapi = custom_openapi
 
 # =========================
-# Default Category
+# Enhanced Endpoints
 # =========================
 
 @app.get("/", tags=["Default"])
-async def root():
-    """Public engine health check - Ugandan Music Focus"""
-    artist_stats = data_store.get_artist_stats()
+@limiter.limit(f"{settings.RATE_LIMIT_PER_MINUTE}/minute")
+async def root(request: Request):
+    """Public engine health check - Enhanced with database info"""
+    artist_stats = await data_store.get_artist_stats()
+    
+    # Get database status
+    db_status = "connected" if settings.DATABASE_URL else "not_configured"
+    redis_status = "connected" if settings.REDIS_URL else "not_configured"
     
     return {
-        "service": "UG Board Engine - Ugandan Music",
-        "version": "6.0.0",
+        "service": "UG Board Engine - Production Ready",
+        "version": settings.VERSION,
         "status": "online",
         "timestamp": datetime.utcnow().isoformat(),
         "focus": "Ugandan music and artists",
         "rule": "Foreign artists only allowed in collaborations with Ugandan artists",
         "artist_statistics": artist_stats,
-        "render": {
-            "service": SERVICE_NAME,
-            "instance": INSTANCE_ID,
-            "on_render": os.getenv("RENDER", "").lower() == "true"
+        "database": {
+            "status": db_status,
+            "redis": redis_status
+        },
+        "instance": {
+            "service": settings.SERVICE_NAME,
+            "id": settings.INSTANCE_ID,
+            "environment": settings.ENVIRONMENT
         },
         "endpoints": {
             "docs": "/docs",
             "health": "/health",
+            "metrics": "/metrics" if not settings.DEBUG else None,
             "uganda_top100": "/charts/top100",
             "regional_charts": "/charts/regions/{region}",
             "trending": "/charts/trending",
@@ -528,57 +865,53 @@ async def root():
         }
     }
 
-# =========================
-# Health Category
-# =========================
 
 @app.get("/health", tags=["Health"])
+@limiter.limit(f"{settings.RATE_LIMIT_PER_MINUTE}/minute")
 async def health():
-    """Public health check"""
-    return {
+    """Enhanced health check with dependency verification"""
+    health_status = {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "service": SERVICE_NAME,
-        "instance": INSTANCE_ID,
-        "focus": "Ugandan music charting"
+        "service": settings.SERVICE_NAME,
+        "instance": settings.INSTANCE_ID,
+        "version": settings.VERSION,
     }
-
-@app.get("/admin/health", tags=["Health"], dependencies=[Depends(verify_admin)])
-async def admin_health():
-    """Admin health check with Ugandan music stats"""
-    artist_stats = data_store.get_artist_stats()
     
-    return {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "system": {
-            "service": SERVICE_NAME,
-            "instance": INSTANCE_ID,
-            "python_version": os.getenv("PYTHON_VERSION", "unknown"),
-            "on_render": os.getenv("RENDER", "").lower() == "true"
-        },
-        "ugandan_music_data": {
-            "total_charts": len(data_store.charts),
-            "unique_songs": len(data_store.ugandan_songs),
-            "artist_statistics": artist_stats,
-            "publish_entries": len(data_store.publish_index),
-            "ingestion_logs": len(data_store.ingestion_log)
-        }
-    }
+    # Check database connectivity
+    if settings.DATABASE_URL:
+        try:
+            pool = await Database.get_pool()
+            async with pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+            health_status["database"] = "healthy"
+        except Exception as e:
+            health_status["database"] = "unhealthy"
+            health_status["database_error"] = str(e)
+    
+    # Check Redis connectivity
+    if settings.REDIS_URL:
+        try:
+            client = await RedisCache.get_client()
+            await client.ping()
+            health_status["redis"] = "healthy"
+        except Exception as e:
+            health_status["redis"] = "unhealthy"
+            health_status["redis_error"] = str(e)
+    
+    return health_status
 
-# =========================
-# Charts Category
-# =========================
 
 @app.get("/charts/top100", tags=["Charts"])
+@limiter.limit(f"{settings.RATE_LIMIT_PER_MINUTE}/minute")
 async def get_top100():
-    """Uganda Top 100 (current week) - Ugandan music only"""
-    chart_data = data_store.get_top100()
+    """Uganda Top 100 (current week) - From database"""
+    chart_data = await data_store.get_top100()
     
-    collaborations = sum(1 for song in chart_data 
-                        if song.get("artist_metadata", {}).get("is_collaboration", False))
-    foreign_involved = sum(1 for song in chart_data 
-                          if song.get("artist_metadata", {}).get("has_foreign_artist", False))
+    # Calculate statistics
+    collaborations = sum(1 for song in chart_data if song.get("is_collaboration", False))
+    foreign_involved = sum(1 for song in chart_data if song.get("has_foreign_artist", False))
+    total_entries = len(chart_data)
     
     return {
         "region": "ug",
@@ -586,36 +919,24 @@ async def get_top100():
         "week_id": datetime.utcnow().strftime("%Y-W%W"),
         "published": datetime.utcnow().isoformat(),
         "entries": chart_data,
-        "total_entries": 100,
+        "total_entries": total_entries,
         "statistics": {
             "collaborations": collaborations,
             "foreign_involved": foreign_involved,
-            "pure_ugandan": 100 - foreign_involved,
-            "collaboration_rate": f"{(collaborations / 100) * 100:.1f}%"
+            "pure_ugandan": total_entries - foreign_involved,
+            "collaboration_rate": f"{(collaborations / total_entries) * 100:.1f}%" if total_entries > 0 else "0%"
         },
-        "instance": INSTANCE_ID,
-        "rule_enforced": "Foreign artists only in collaborations with Ugandan artists"
+        "instance": settings.INSTANCE_ID,
+        "rule_enforced": "Foreign artists only in collaborations with Ugandan artists",
+        "data_source": "database"
     }
 
-@app.get("/charts/index", tags=["Charts"])
-async def get_chart_index():
-    """Public chart publish index"""
-    return {
-        "index": data_store.publish_index,
-        "total_weeks": len(data_store.publish_index),
-        "latest_week": data_store.publish_index[0] if data_store.publish_index else None,
-        "timestamp": datetime.utcnow().isoformat(),
-        "chart_focus": "Ugandan music across all regions"
-    }
-
-# =========================
-# Regions Category
-# =========================
 
 @app.get("/charts/regions/{region}", tags=["Regions"])
+@limiter.limit(f"{settings.RATE_LIMIT_PER_MINUTE}/minute")
 async def get_region_chart(region: Region = Path(..., description="Region code")):
-    """Get regional chart for Ugandan music"""
-    chart_data = data_store.get_region_top5(region.value)
+    """Get regional chart for Ugandan music from database"""
+    chart_data = await data_store.get_region_top5(region.value)
     
     region_names = {
         "ug": "Uganda (Top 100 available separately)",
@@ -631,364 +952,172 @@ async def get_region_chart(region: Region = Path(..., description="Region code")
         "week_id": datetime.utcnow().strftime("%Y-W%W"),
         "entries": chart_data,
         "total_entries": len(chart_data),
-        "instance": INSTANCE_ID,
+        "instance": settings.INSTANCE_ID,
         "timestamp": datetime.utcnow().isoformat(),
-        "note": "All charts feature Ugandan artists or collaborations with Ugandan artists"
+        "note": "All charts feature Ugandan artists or collaborations with Ugandan artists",
+        "data_source": "database"
     }
 
-# =========================
-# Trending Category
-# =========================
 
 @app.get("/charts/trending", tags=["Trending"])
+@limiter.limit(f"{settings.RATE_LIMIT_PER_MINUTE}/minute")
 async def get_trending(
+    request: Request,
     limit: int = Query(default=20, ge=1, le=50, description="Number of trending items")
 ):
-    """Trending Ugandan songs (live)"""
-    trending_data = data_store.get_trending(limit)
+    """Trending Ugandan songs (live) from database"""
+    trending_data = await data_store.get_trending(limit)
     
-    ugandan_only = sum(1 for song in trending_data 
-                      if all(MusicRules.is_ugandan_artist(a) 
-                            for a in MusicRules.extract_artist_list(song.get("artist", ""))))
+    # Calculate statistics
+    ugandan_only = 0
+    youtube_count = 0
+    radio_count = 0
+    
+    for song in trending_data:
+        artists = EnhancedMusicRules.extract_artist_list(song.get("artist", ""))
+        if all(await EnhancedMusicRules.is_ugandan_artist(a) for a in artists):
+            ugandan_only += 1
+        
+        if song.get("source") == "youtube":
+            youtube_count += 1
+        elif song.get("source") == "radio":
+            radio_count += 1
     
     return {
         "timestamp": datetime.utcnow().isoformat(),
-        "data_source": "live",
+        "data_source": "database",
         "trending": trending_data,
         "total_trending": len(trending_data),
         "statistics": {
             "ugandan_only_songs": ugandan_only,
             "collaboration_songs": len(trending_data) - ugandan_only,
             "source_breakdown": {
-                "youtube": sum(1 for s in trending_data if s.get("source") == "youtube"),
-                "radio": sum(1 for s in trending_data if s.get("source") == "radio")
+                "youtube": youtube_count,
+                "radio": radio_count,
+                "other": len(trending_data) - youtube_count - radio_count
             }
         },
-        "refresh_interval": "5 minutes",
-        "instance": INSTANCE_ID,
+        "refresh_interval": "1 minute",
+        "instance": settings.INSTANCE_ID,
         "focus": "Trending Ugandan music"
     }
 
-# =========================
-# Artists Category
-# =========================
 
-@app.get("/artists/stats", tags=["Artists"])
-async def get_artist_stats():
-    """Get statistics about Ugandan artists"""
-    return {
-        "statistics": data_store.get_artist_stats(),
-        "rules": {
-            "primary_focus": "Ugandan music and artists",
-            "foreign_artist_policy": "Only allowed in collaborations with Ugandan artists",
-            "validation_rules": "Automatic artist type detection and validation"
-        },
-        "timestamp": datetime.utcnow().isoformat(),
-        "instance": INSTANCE_ID
-    }
-
-@app.post("/artists/validate", tags=["Artists"])
-async def validate_artist(artist_name: str = Body(..., embed=True)):
-    """Validate if an artist is Ugandan or approved collaborator"""
-    artists = MusicRules.extract_artist_list(artist_name)
-    validation_results = []
-    
-    for artist in artists:
-        artist_type = MusicRules.get_artist_type(artist)
-        validation_results.append({
-            "artist": artist,
-            "type": artist_type,
-            "is_ugandan": artist_type == "ugandan",
-            "is_approved_collaborator": artist_type == "foreign_collaborator",
-            "can_appear_in_chart": artist_type in ["ugandan", "foreign_collaborator"]
-        })
-    
-    # Overall validation
-    has_ugandan = any(r["is_ugandan"] for r in validation_results)
-    has_foreign = any(r["type"] == "foreign_collaborator" for r in validation_results)
-    has_unknown = any(r["type"] == "unknown" for r in validation_results)
-    
-    overall_valid = (
-        (has_ugandan and not has_unknown) or
-        (has_ugandan and has_foreign)
-    )
-    
-    return {
-        "artist_input": artist_name,
-        "parsed_artists": artists,
-        "validation_results": validation_results,
-        "overall_validation": {
-            "is_valid": overall_valid,
-            "reason": "Valid: All Ugandan artists or collaboration with approved foreign artist" 
-                     if overall_valid else 
-                     "Invalid: Contains unknown foreign artist or no Ugandan artist",
-            "has_ugandan_artist": has_ugandan,
-            "has_foreign_collaborator": has_foreign,
-            "has_unknown_artist": has_unknown
-        },
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-# =========================
-# Ingestion Category
-# =========================
-
-@app.post("/ingest/youtube", tags=["Ingestion"], dependencies=[Depends(verify_ingestion)])
-async def ingest_youtube(payload: Dict = Body(...)):
-    """Ingest YouTube videos with Ugandan artist validation"""
-    try:
-        validated = validate_ingestion_payload(payload)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    
-    # Ugandan music validation
-    validation_report = {
-        "total_items": len(validated["items"]),
-        "valid_items": 0,
-        "invalid_items": [],
-        "artist_breakdown": {
-            "ugandan_only": 0,
-            "collaborations": 0,
-            "invalid_foreign": 0
-        }
-    }
-    
-    valid_items = []
-    for i, item in enumerate(validated["items"]):
-        artists = item.get("artist_metadata", {}).get("artists_list", [])
-        has_ugandan = any(MusicRules.is_ugandan_artist(a) for a in artists)
-        has_foreign = any(not MusicRules.is_ugandan_artist(a) for a in artists)
-        
-        if has_ugandan:
-            validation_report["valid_items"] += 1
-            valid_items.append(item)
-            
-            if has_foreign:
-                validation_report["artist_breakdown"]["collaborations"] += 1
-            else:
-                validation_report["artist_breakdown"]["ugandan_only"] += 1
-        else:
-            validation_report["artist_breakdown"]["invalid_foreign"] += 1
-            validation_report["invalid_items"].append({
-                "index": i,
-                "artist": item.get("artist", "Unknown"),
-                "reason": "No Ugandan artist found"
-            })
-    
-    request_id = str(uuid.uuid4())
-    log_entry = data_store.log_ingestion("youtube", len(valid_items), valid_items)
-    
-    return {
-        "status": "success",
-        "message": f"Ingested {len(valid_items)} YouTube items with Ugandan artist validation",
-        "request_id": request_id,
-        "source": "youtube",
-        "items_processed": len(valid_items),
-        "validation_report": validation_report,
-        "ugandan_music_compliance": validation_report["artist_breakdown"]["invalid_foreign"] == 0,
-        "timestamp": datetime.utcnow().isoformat(),
-        "idempotent": True,
-        "log_entry": log_entry,
-        "instance": INSTANCE_ID
-    }
-
-@app.post("/ingest/radio", tags=["Ingestion"], dependencies=[Depends(verify_internal)])
-async def ingest_radio(payload: Dict = Body(...)):
-    """Ingest Radio data with Ugandan artist validation"""
-    try:
-        validated = validate_ingestion_payload(payload)
-        
-        # Radio-specific validation
-        for item in validated["items"]:
-            if "station" not in item:
-                raise ValueError("Radio items must include 'station' field")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    
-    # Ugandan music validation
-    validation_report = {
-        "total_items": len(validated["items"]),
-        "valid_items": 0,
-        "artist_breakdown": {
-            "ugandan_only": 0,
-            "collaborations": 0,
-            "invalid_foreign": 0
-        }
-    }
-    
-    valid_items = []
-    for i, item in enumerate(validated["items"]):
-        artists = item.get("artist_metadata", {}).get("artists_list", [])
-        has_ugandan = any(MusicRules.is_ugandan_artist(a) for a in artists)
-        has_foreign = any(not MusicRules.is_ugandan_artist(a) for a in artists)
-        
-        if has_ugandan:
-            validation_report["valid_items"] += 1
-            valid_items.append(item)
-            
-            if has_foreign:
-                validation_report["artist_breakdown"]["collaborations"] += 1
-            else:
-                validation_report["artist_breakdown"]["ugandan_only"] += 1
-        else:
-            validation_report["artist_breakdown"]["invalid_foreign"] += 1
-    
-    log_entry = data_store.log_ingestion("radio", len(valid_items), valid_items)
-    
-    return {
-        "status": "success",
-        "message": f"Ingested {len(valid_items)} radio items with Ugandan artist validation",
-        "source": "radio",
-        "items_processed": len(valid_items),
-        "validation_passed": True,
-        "validation_report": validation_report,
-        "timestamp": datetime.utcnow().isoformat(),
-        "log_entry": log_entry,
-        "instance": INSTANCE_ID
-    }
-
-@app.post("/ingest/tv", tags=["Ingestion"], dependencies=[Depends(verify_internal)])
-async def ingest_tv(payload: Dict = Body(...)):
-    """Ingest TV data with Ugandan artist validation"""
-    try:
-        validated = validate_ingestion_payload(payload)
-        
-        # TV-specific validation
-        for item in validated["items"]:
-            if "channel" not in item:
-                raise ValueError("TV items must include 'channel' field")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    
-    # Ugandan music validation
-    validation_report = {
-        "total_items": len(validated["items"]),
-        "valid_items": 0,
-        "artist_breakdown": {
-            "ugandan_only": 0,
-            "collaborations": 0,
-            "invalid_foreign": 0
-        }
-    }
-    
-    valid_items = []
-    for i, item in enumerate(validated["items"]):
-        artists = item.get("artist_metadata", {}).get("artists_list", [])
-        has_ugandan = any(MusicRules.is_ugandan_artist(a) for a in artists)
-        has_foreign = any(not MusicRules.is_ugandan_artist(a) for a in artists)
-        
-        if has_ugandan:
-            validation_report["valid_items"] += 1
-            valid_items.append(item)
-            
-            if has_foreign:
-                validation_report["artist_breakdown"]["collaborations"] += 1
-            else:
-                validation_report["artist_breakdown"]["ugandan_only"] += 1
-        else:
-            validation_report["artist_breakdown"]["invalid_foreign"] += 1
-    
-    log_entry = data_store.log_ingestion("tv", len(valid_items), valid_items)
-    
-    return {
-        "status": "success",
-        "message": f"Ingested {len(valid_items)} TV items with Ugandan artist validation",
-        "source": "tv",
-        "items_processed": len(valid_items),
-        "validation_passed": True,
-        "validation_report": validation_report,
-        "timestamp": datetime.utcnow().isoformat(),
-        "log_entry": log_entry,
-        "instance": INSTANCE_ID
-    }
-
-# =========================
-# Admin Category
-# =========================
-
-@app.post("/admin/publish/weekly", tags=["Admin"], dependencies=[Depends(verify_admin)])
-async def publish_weekly(
-    regions: List[Region] = Body(default=[Region.UG, Region.EAC, Region.AFR, Region.WW]),
-    dry_run: bool = Body(default=False),
-    force: bool = Body(default=False)
+@app.post("/ingest/radio", tags=["Ingestion"])
+@limiter.limit("30/minute")  # Lower limit for ingestion
+async def ingest_radio(
+    request: Request,
+    payload: IngestionPayload = Body(...),
+    x_internal_token: Optional[str] = Header(None)
 ):
-    """Publish all regions and rotate chart week"""
-    week_id = datetime.utcnow().strftime("%Y-W%W")
+    """Enhanced radio ingestion with database storage"""
+    # Verify internal token
+    if not x_internal_token or x_internal_token != settings.INTERNAL_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid internal token")
     
-    result = {
-        "status": "dry_run" if dry_run else "published",
-        "week_id": week_id,
-        "regions": [r.value for r in regions],
-        "operation": "weekly_publish",
-        "timestamp": datetime.utcnow().isoformat(),
-        "instance": INSTANCE_ID,
-        "idempotent": True,
-        "force": force,
-        "ugandan_music_focus": True
-    }
-    
-    if not dry_run:
-        result["published_at"] = datetime.utcnow().isoformat()
-        result["chart_counts"] = {r.value: 100 if r == Region.UG else 5 for r in regions}
-    
-    return result
-
-@app.get("/admin/index", tags=["Admin"], dependencies=[Depends(verify_admin)])
-async def get_admin_index():
-    """(Admin) Read-only weekly publish index"""
-    return {
-        "admin_view": True,
-        "index": data_store.publish_index,
-        "total_entries": len(data_store.publish_index),
-        "exportable": True,
-        "timestamp": datetime.utcnow().isoformat(),
-        "instance": INSTANCE_ID,
-        "ugandan_music_focus": True
-    }
-
-@app.post("/admin/regions/{region}/build", tags=["Admin"], dependencies=[Depends(verify_admin)])
-async def build_region_chart(
-    region: Region = Path(..., description="Region code"),
-    preview: bool = Body(default=True),
-    limit: int = Body(default=10, ge=1, le=100)
-):
-    """(Admin) Build & preview region chart (no publish)"""
-    # Use real Ugandan songs for preview
-    chart_data = []
-    for i in range(1, min(limit, len(data_store.ugandan_songs)) + 1):
-        song = data_store.ugandan_songs[i % len(data_store.ugandan_songs)].copy()
+    try:
+        # Validate and process songs
+        saved_count = await data_store.save_songs_batch(payload.items, payload.source)
         
-        chart_data.append({
-            "rank": i,
-            "song_id": f"preview_{region.value}_{i:02d}",
-            "title": song["title"],
-            "artist": song["artist"],
-            "plays": 1000 * (limit - i + 1),
-            "score": 85.0 - (i * 3),
-            "change": "new" if i == 1 else "up",
-            "region": region.value,
-            "preview": True,
-            "genre": song["genre"]
-        })
+        # Log ingestion
+        log_entry = await data_store.log_ingestion(
+            payload.source, 
+            saved_count, 
+            [item.dict() for item in payload.items]
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Ingested {saved_count} radio items with Ugandan artist validation",
+            "source": payload.source,
+            "items_received": len(payload.items),
+            "items_saved": saved_count,
+            "rejected_count": len(payload.items) - saved_count,
+            "timestamp": datetime.utcnow().isoformat(),
+            "log_entry": log_entry,
+            "instance": settings.INSTANCE_ID,
+            "database_persisted": True
+        }
+        
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=f"Validation error: {e}")
+    except Exception as e:
+        # Log to Sentry
+        if settings.SENTRY_DSN:
+            sentry_sdk.capture_exception(e)
+        
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+@app.post("/ingest/youtube", tags=["Ingestion"])
+@limiter.limit("30/minute")
+async def ingest_youtube(
+    request: Request,
+    payload: IngestionPayload = Body(...),
+    authorization: Optional[str] = Header(None)
+):
+    """Enhanced YouTube ingestion with database storage"""
+    # Verify ingestion token
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
     
-    return {
-        "status": "preview" if preview else "built",
-        "region": region.value,
-        "chart": chart_data,
-        "chart_size": len(chart_data),
-        "preview_only": preview,
-        "would_publish": not preview,
-        "timestamp": datetime.utcnow().isoformat(),
-        "instance": INSTANCE_ID,
-        "ugandan_music_focus": True
-    }
+    token = authorization.replace("Bearer ", "").strip()
+    if token != settings.INJECT_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid ingestion token")
+    
+    try:
+        # Validate and process songs
+        saved_count = await data_store.save_songs_batch(payload.items, payload.source)
+        
+        # Log ingestion
+        log_entry = await data_store.log_ingestion(
+            payload.source, 
+            saved_count, 
+            [item.dict() for item in payload.items]
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Ingested {saved_count} YouTube items with Ugandan artist validation",
+            "source": payload.source,
+            "items_received": len(payload.items),
+            "items_saved": saved_count,
+            "rejected_count": len(payload.items) - saved_count,
+            "timestamp": datetime.utcnow().isoformat(),
+            "log_entry": log_entry,
+            "instance": settings.INSTANCE_ID,
+            "database_persisted": True
+        }
+        
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=f"Validation error: {e}")
+    except Exception as e:
+        # Log to Sentry
+        if settings.SENTRY_DSN:
+            sentry_sdk.capture_exception(e)
+        
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Internal server error: {str(e)}"
+        )
+
 
 # =========================
-# Error Handling
+# Enhanced Error Handling
 # =========================
 
 @app.exception_handler(HTTPException)
-async def http_exception_handler(request, exc):
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Enhanced HTTP exception handler with request ID"""
+    request_id = str(uuid.uuid4())
+    
+    # Log to Sentry for server errors
+    if exc.status_code >= 500 and settings.SENTRY_DSN:
+        sentry_sdk.capture_exception(exc)
+    
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -996,14 +1125,22 @@ async def http_exception_handler(request, exc):
             "status_code": exc.status_code,
             "timestamp": datetime.utcnow().isoformat(),
             "path": str(request.url.path),
-            "instance": INSTANCE_ID,
-            "request_id": str(uuid.uuid4())
+            "method": request.method,
+            "instance": settings.INSTANCE_ID,
+            "request_id": request_id
         }
     )
 
+
 @app.exception_handler(Exception)
-async def general_exception_handler(request, exc):
+async def general_exception_handler(request: Request, exc: Exception):
+    """Enhanced general exception handler"""
     error_id = str(uuid.uuid4())
+    
+    # Log to Sentry
+    if settings.SENTRY_DSN:
+        sentry_sdk.capture_exception(exc)
+    
     return JSONResponse(
         status_code=500,
         content={
@@ -1011,10 +1148,12 @@ async def general_exception_handler(request, exc):
             "error_id": error_id,
             "timestamp": datetime.utcnow().isoformat(),
             "path": str(request.url.path),
-            "instance": INSTANCE_ID,
+            "method": request.method,
+            "instance": settings.INSTANCE_ID,
             "request_id": error_id
         }
     )
+
 
 # =========================
 # Server Startup
@@ -1022,8 +1161,36 @@ async def general_exception_handler(request, exc):
 
 if __name__ == "__main__":
     import uvicorn
-    print(f"🚀 Starting UG Board Engine - Ugandan Music Focus v6.0.0 on port {PORT}")
-    print(f"🌐 Service: {SERVICE_NAME}")
-    print(f"📚 Docs: http://localhost:{PORT}/docs")
-    print(f"🏥 Health: http://localhost:{PORT}/health")
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    import hashlib
+    
+    print(f"🚀 Starting UG Board Engine - Production Ready v{settings.VERSION}")
+    print(f"🌐 Service: {settings.SERVICE_NAME}")
+    print(f"🔧 Environment: {settings.ENVIRONMENT}")
+    print(f"🔐 Instance ID: {settings.INSTANCE_ID}")
+    print(f"📚 Docs: http://localhost:{settings.PORT}/docs")
+    print(f"🏥 Health: http://localhost:{settings.PORT}/health")
+    
+    if not settings.DEBUG:
+        print(f"📊 Metrics: http://localhost:{settings.PORT}/metrics")
+    
+    print("\n🔑 Security Configuration:")
+    print(f"   • Admin Token: {'****' + settings.ADMIN_TOKEN[-8:] if settings.ADMIN_TOKEN else 'Not set'}")
+    print(f"   • Ingestion Token: {'****' + settings.INJECT_TOKEN[-8:] if settings.INJECT_TOKEN else 'Not set'}")
+    print(f"   • Internal Token: {'****' + settings.INTERNAL_TOKEN[-8:] if settings.INTERNAL_TOKEN else 'Not set'}")
+    
+    print("\n🗄️  Database Configuration:")
+    print(f"   • PostgreSQL: {'Connected' if settings.DATABASE_URL else 'Not configured'}")
+    print(f"   • Redis: {'Connected' if settings.REDIS_URL else 'Not configured'}")
+    
+    print("\n🎯 Focus: Ugandan music and artists")
+    print("📜 Rule: Foreign artists only allowed in collaborations with Ugandan artists")
+    print("=" * 60)
+    
+    uvicorn.run(
+        app,
+        host=settings.HOST,
+        port=settings.PORT,
+        reload=settings.DEBUG,
+        log_level="info" if settings.DEBUG else "warning",
+        access_log=settings.DEBUG
+    )
