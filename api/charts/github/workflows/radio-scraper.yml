@@ -1,323 +1,196 @@
-name: Ugandan Radio Scraper
+name: Enhanced Radio Scraper Cron
 on:
-  # Runs every 30 minutes
   schedule:
-    - cron: '*/30 * * * *'
-  # Manual trigger from GitHub UI
+    # Run every 4 hours for more frequent data
+    - cron: '0 */4 * * *'
   workflow_dispatch:
-  # Trigger when you push to main (for testing)
-  push:
-    branches: [main]
-    paths: ['**.py', '.github/workflows/radio-scraper.yml']
+    inputs:
+      force_full_scrape:
+        description: 'Force full scrape (all stations)'
+        required: false
+        default: 'false'
+        type: boolean
+      debug_mode:
+        description: 'Enable debug logging'
+        required: false
+        default: 'false'
+        type: boolean
+
+# Prevent concurrent runs to avoid data corruption
+concurrency:
+  group: radio-scraper-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  scrape-and-send:
+  validate-environment:
     runs-on: ubuntu-latest
-    timeout-minutes: 10  # Prevents infinite runs
+    timeout-minutes: 5
+    outputs:
+      secrets_valid: ${{ steps.check-secrets.outputs.valid }}
+      api_reachable: ${{ steps.check-api.outputs.reachable }}
     
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-        cache: 'pip'
-        
-    - name: Install dependencies
-      run: |
-        pip install aiohttp
-        pip install requests
-        
-    - name: Run radio scraper
-      id: scrape
-      run: |
-        echo "🕐 $(date) - Starting radio scrape..."
-        
-        # Create the scraper script
-        cat > radio_scraper.py << 'EOF'
-import asyncio
-import aiohttp
-import re
-from datetime import datetime
-import hashlib
-import json
-import os
-import sys
-
-class UgandaRadioScraper:
-    """Scraper for Ugandan radio stations"""
-    
-    def __init__(self):
-        self.stations = [
-            {
-                "name": "Capital FM",
-                "url": "https://ice.capitalradio.co.ug/capital_live",
-                "region": "Eastern",
-                "frequency": "91.3"
-            },
-            {
-                "name": "Galaxy FM", 
-                "url": "http://41.210.160.10:8000/stream",
-                "region": "Eastern",
-                "frequency": "100.2"
-            },
-            {
-                "name": "Radio Simba",
-                "url": "https://stream.radiosimba.ug/live", 
-                "region": "Eastern",
-                "frequency": "97.3"
-            },
-            {
-                "name": "Beat FM",
-                "url": "http://91.193.183.197:8000/beatfm",
-                "region": "Eastern",
-                "frequency": "96.3"
-            },
-            {
-                "name": "Crooze FM",
-                "url": "http://stream.croozefm.com:8000/croozefm",
-                "region": "Western",
-                "frequency": "91.2"
-            }
-        ]
-    
-    async def scrape_one(self, station):
-        """Scrape one station"""
-        try:
-            headers = {
-                'Icy-MetaData': '1', 
-                'User-Agent': 'UG-Board-Scraper/1.0 (GitHub Actions)'
-            }
-            
-            timeout = aiohttp.ClientTimeout(total=10)
-            
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(station["url"], headers=headers) as response:
-                    if response.status != 200:
-                        print(f"❌ {station['name']}: HTTP {response.status}")
-                        return None
-                    
-                    metaint = int(response.headers.get('icy-metaint', 0))
-                    if metaint == 0:
-                        print(f"⚠️ {station['name']}: No metadata support")
-                        return None
-                    
-                    # Read audio data until metadata
-                    reader = response.content
-                    await reader.readexactly(metaint)
-                    
-                    # Read metadata length
-                    meta_byte = await reader.readexactly(1)
-                    meta_length = ord(meta_byte) * 16
-                    
-                    if meta_length == 0:
-                        return None
-                    
-                    # Read metadata
-                    meta_data = await reader.readexactly(meta_length)
-                    meta_text = meta_data.decode('utf-8', errors='ignore')
-                    
-                    # Find song title
-                    match = re.search(r"StreamTitle='(.*?)';", meta_text)
-                    if match:
-                        full_title = match.group(1).strip()
-                        
-                        # Split artist and title
-                        if " - " in full_title:
-                            parts = full_title.split(" - ", 1)
-                            artist, title = parts[0].strip(), parts[1].strip()
-                        elif ": " in full_title:
-                            parts = full_title.split(": ", 1)
-                            artist, title = parts[0].strip(), parts[1].strip()
-                        elif "|" in full_title:
-                            parts = full_title.split("|", 1)
-                            artist, title = parts[0].strip(), parts[1].strip()
-                        else:
-                            artist, title = "Unknown", full_title
-                        
-                        # Clean up prefixes
-                        if title.startswith("By "):
-                            title = title[3:]
-                        if artist.startswith("By "):
-                            artist = artist[3:]
-                        
-                        print(f"✅ {station['name']}: {artist} - {title}")
-                        
-                        return {
-                            "station": station["name"],
-                            "frequency": station["frequency"],
-                            "artist": artist[:100],
-                            "title": title[:200],
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "region": station["region"],
-                            "source_url": station["url"]
-                        }
-                    else:
-                        print(f"⚠️ {station['name']}: No song found")
-                        
-        except asyncio.TimeoutError:
-            print(f"⏱️ {station['name']}: Timeout after 10s")
-        except Exception as e:
-            print(f"❌ {station['name']}: {str(e)[:100]}")
-        
-        return None
-    
-    async def scrape_all(self):
-        """Scrape all stations"""
-        print(f"📻 Scraping {len(self.stations)} Ugandan radio stations...")
-        
-        tasks = []
-        for station in self.stations:
-            tasks.append(self.scrape_one(station))
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Filter successful results
-        songs = []
-        for result in results:
-            if isinstance(result, Exception):
-                continue
-            if result:
-                songs.append(result)
-        
-        return songs
-
-async def main():
-    """Main scraping function"""
-    print("🚀 UG Board Radio Scraper - GitHub Actions")
-    print(f"⏰ Started at: {datetime.utcnow().isoformat()}")
-    print("-" * 50)
-    
-    scraper = UgandaRadioScraper()
-    songs = await scraper.scrape_all()
-    
-    print("-" * 50)
-    print(f"📊 Results: {len(songs)} songs found")
-    
-    if songs:
-        # Send to UG Board Engine API
-        import requests
-        
-        payload = {
-            "items": songs,
-            "source": "radio",
-            "timestamp": datetime.utcnow().isoformat(),
-            "metadata": {
-                "runner": "github-actions",
-                "scrape_id": hashlib.md5(str(datetime.now()).encode()).hexdigest()[:16],
-                "action_run_id": os.environ.get('GITHUB_RUN_ID', 'unknown'),
-                "stations_scraped": len(set(s["station"] for s in songs))
-            }
-        }
-        
-        try:
-            print("📤 Sending to UG Board Engine API...")
-            
-            response = requests.post(
-                "https://ugboard-engine.onrender.com/ingest/radio",
-                json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Internal-Token": "1994199620002019866"
-                },
-                timeout=15
-            )
-            
-            print(f"📨 API Response: {response.status_code}")
-            
-            if response.status_code == 200:
-                result = response.json()
-                print(f"✅ Success! Items processed: {result.get('items_processed', 0)}")
-                print(f"📝 Message: {result.get('message', 'No message')}")
-                
-                # Save summary for next steps
-                summary = {
-                    "songs_found": len(songs),
-                    "api_success": True,
-                    "items_processed": result.get("items_processed", 0),
-                    "stations": list(set(s["station"] for s in songs)),
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-                
-                # Write to file for workflow summary
-                with open("scrape_summary.json", "w") as f:
-                    json.dump(summary, f)
-                    
-                # Also output as GitHub Actions step output
-                print(f"::set-output name=songs_found::{len(songs)}")
-                print(f"::set-output name=api_success::true")
-                
-            else:
-                print(f"❌ API Error: {response.status_code}")
-                print(f"Response: {response.text[:200]}")
-                print(f"::set-output name=api_success::false")
-                
-        except Exception as e:
-            print(f"❌ Failed to send to API: {e}")
-            print(f"::set-output name=api_success::false")
-    else:
-        print("ℹ️ No songs found this time")
-        print(f"::set-output name=songs_found::0")
-    
-    print("=" * 50)
-    print("🎉 Scraping completed!")
-
-if __name__ == "__main__":
-    asyncio.run(main())
-EOF
-        
-        # Run the scraper
-        python radio_scraper.py
-        
-    - name: Upload scrape summary
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: radio-scrape-summary
-        path: |
-          scrape_summary.json
-          radio_scraper.py
-        retention-days: 7
-        
-    - name: Post to GitHub summary
-      if: always()
-      run: |
-        echo "## 📻 Radio Scrape Results" >> $GITHUB_STEP_SUMMARY
-        
-        if [ -f scrape_summary.json ]; then
-          SONGS_FOUND=$(jq -r '.songs_found' scrape_summary.json)
-          API_SUCCESS=$(jq -r '.api_success' scrape_summary.json)
-          STATIONS=$(jq -r '.stations | join(", ")' scrape_summary.json)
-          TIMESTAMP=$(jq -r '.timestamp' scrape_summary.json)
+      - name: Check required secrets exist
+        id: check-secrets
+        run: |
+          REQUIRED_SECRETS=("RENDER_API_URL" "SCRAPER_API_KEY" "INTERNAL_TOKEN")
+          missing_secrets=()
           
-          if [ "$API_SUCCESS" = "true" ]; then
-            echo "✅ **SUCCESS**" >> $GITHUB_STEP_SUMMARY
-            echo "Found **$SONGS_FOUND** songs" >> $GITHUB_STEP_SUMMARY
-            echo "Stations: $STATIONS" >> $GITHUB_STEP_SUMMARY
-            echo "Time: $TIMESTAMP" >> $GITHUB_STEP_SUMMARY
+          for secret in "${REQUIRED_SECRETS[@]}"; do
+            if [ -z "${{ secrets[secret] }}" ]; then
+              missing_secrets+=("$secret")
+            fi
+          done
+          
+          if [ ${#missing_secrets[@]} -eq 0 ]; then
+            echo "✅ All secrets present"
+            echo "valid=true" >> $GITHUB_OUTPUT
           else
-            echo "❌ **PARTIAL FAILURE**" >> $GITHUB_STEP_SUMMARY
-            echo "Found **$SONGS_FOUND** songs but API call failed" >> $GITHUB_STEP_SUMMARY
+            echo "❌ Missing secrets: ${missing_secrets[*]}"
+            echo "valid=false" >> $GITHUB_OUTPUT
           fi
-        else
-          echo "❌ **SCRAPER FAILED**" >> $GITHUB_STEP_SUMMARY
-          echo "No summary file generated" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 🔄 Next Run" >> $GITHUB_STEP_SUMMARY
-        echo "The scraper will run again in **30 minutes**" >> $GITHUB_STEP_SUMMARY
-        
-    - name: Send success notification (optional)
-      if: success()
-      run: |
-        echo "✅ Scraping completed successfully!"
-        echo "Check the logs for details."
-        
-    - name: Send failure notification (optional)
-      if: failure()
-      run: |
-        echo "❌ Scraping failed!"
-        echo "Check the logs for errors."
+      
+      - name: Verify API is reachable
+        if: steps.check-secrets.outputs.valid == 'true'
+        id: check-api
+        run: |
+          API_URL="${{ secrets.RENDER_API_URL }}"
+          if curl -s --max-time 10 "$API_URL/health" | grep -q "healthy"; then
+            echo "✅ API is reachable"
+            echo "reachable=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ API is not reachable"
+            echo "reachable=false" >> $GITHUB_OUTPUT
+          fi
+
+  scrape:
+    needs: validate-environment
+    if: needs.validate-environment.outputs.secrets_valid == 'true' && needs.validate-environment.outputs.api_reachable == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30  # Prevent infinite runs
+    
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      
+      - name: Setup Python with caching
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Additional scraper-specific dependencies
+          pip install aiohttp requests beautifulsoup4 lxml
+      
+      - name: Run enhanced scraper with monitoring
+        id: scraper
+        env:
+          API_URL: ${{ secrets.RENDER_API_URL }}
+          INTERNAL_TOKEN: ${{ secrets.INTERNAL_TOKEN }}
+          FORCE_FULL_SCRAPE: ${{ github.event.inputs.force_full_scrape || 'false' }}
+          DEBUG_MODE: ${{ github.event.inputs.debug_mode || 'false' }}
+        run: |
+          set -e  # Exit on error
+          
+          START_TIME=$(date +%s)
+          
+          echo "🚀 Starting enhanced radio scraper..."
+          echo "📅 $(date)"
+          echo "🌐 API: $API_URL"
+          echo "🔧 Mode: $FORCE_FULL_SCRAPE"
+          echo "🐛 Debug: $DEBUG_MODE"
+          
+          # Create enhanced scraper directory
+          mkdir -p .scraper_logs
+          
+          # Run scraper with tee to capture output
+          python scripts/enhanced_radio_scraper.py 2>&1 | tee .scraper_logs/run_$(date +%Y%m%d_%H%M%S).log
+          
+          SCRAPER_EXIT_CODE=${PIPESTATUS[0]}
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          
+          echo "::set-output name=exit_code::$SCRAPER_EXIT_CODE"
+          echo "::set-output name=duration::$DURATION"
+          
+          if [ $SCRAPER_EXIT_CODE -eq 0 ]; then
+            echo "✅ Scraper completed successfully"
+            echo "⏱️ Duration: ${DURATION}s"
+          else
+            echo "❌ Scraper failed with code: $SCRAPER_EXIT_CODE"
+            echo "⏱️ Duration: ${DURATION}s"
+            exit $SCRAPER_EXIT_CODE
+          fi
+      
+      - name: Upload scraper logs and artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraper-logs-${{ github.run_id }}
+          path: |
+            .scraper_logs/
+            scripts/*.py
+          retention-days: 30
+      
+      - name: Generate performance report
+        if: always()
+        run: |
+          echo "## 📊 Scraper Performance Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Run Details:**" >> $GITHUB_STEP_SUMMARY
+          echo "- 📅 Date: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "- ⏱️ Duration: ${{ steps.scraper.outputs.duration || 'Unknown' }} seconds" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔧 Scraper Version: $(cd scripts && git log -1 --oneline)" >> $GITHUB_STEP_SUMMARY
+          echo "- 🏃 Runner: ${{ runner.os }} ${{ runner.arch }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.scraper.outputs.exit_code }}" = "0" ]; then
+            echo "✅ **SUCCESS** - Scraper completed successfully" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **FAILURE** - Scraper exited with code: ${{ steps.scraper.outputs.exit_code }}" >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      - name: Send notification on failure
+        if: failure() && steps.scraper.outputs.exit_code != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚨 **Radio Scraper Failed**\n\nWorkflow ${context.runId} failed with exit code ${{ steps.scraper.outputs.exit_code }}.\n\n[View Logs](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`
+            })
+
+  keepalive:
+    needs: scrape
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: Keepalive ping
+        uses: gautamkrishnar/keepalive-workflow@v1
+        with:
+          committer_username: 'github-actions[bot]'
+          committer_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: '🤖 Automated keepalive commit for radio scraper'
+          force_push: false
