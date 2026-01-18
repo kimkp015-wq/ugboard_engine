@@ -1,9 +1,5 @@
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-requests==2.31.0
-feedparser==6.0.10
-SQLAlchemy==2.0.23
-python-multipart
-python-jose[cryptography]
-passlib[bcrypt]
-python-dotenv
+fastapi
+uvicorn[standard]
+requests
+feedparser
+SQLAlchemy
