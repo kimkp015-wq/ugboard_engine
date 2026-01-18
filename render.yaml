@@ -5,11 +5,11 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: PORT
+        value: 8000
       - key: ADMIN_TOKEN
-        value: admin-ug-board-2025
+        generateValue: true
       - key: INJECT_TOKEN
-        value: inject-ug-board-2025
+        generateValue: true
       - key: INTERNAL_TOKEN
-        value: 1994199620002019866
-    healthCheckPath: /health
-    autoDeploy: true
+        generateValue: true
