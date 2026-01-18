@@ -1,10 +1,11 @@
 """
 Radio ingestion endpoints for UG Board Engine
-Simple version that works with the inline scoring functions
+Fixed version without multipart dependency
 """
 
 from fastapi import APIRouter, Header, HTTPException
 from datetime import datetime
+from typing import Optional, Dict, Any
 
 router = APIRouter()
 
@@ -50,9 +51,6 @@ async def ingest_radio_data(
             item_copy["source"] = "radio"
             processed_items.append(item_copy)
         
-        # TODO: Save to data store
-        # For now, just return success
-        
         return {
             "status": "success",
             "message": f"Processed {len(processed_items)} radio items",
@@ -68,7 +66,7 @@ async def ingest_radio_data(
 
 @router.post("/radio/scrape")
 async def scrape_radio_stations(
-    stations: list = None,
+    scrape_request: Optional[Dict[str, Any]] = None,  # ← FIXED: Use dict instead of list
     x_internal_token: str = Header(None, alias="X-Internal-Token")
 ):
     """
@@ -79,6 +77,10 @@ async def scrape_radio_stations(
         raise HTTPException(status_code=401, detail="Invalid worker token")
     
     try:
+        stations = []
+        if scrape_request and isinstance(scrape_request, dict):
+            stations = scrape_request.get("stations", [])
+        
         stations = stations or ["Capital FM", "Beat FM", "Radio One"]
         
         # Simulate scraping
