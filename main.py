@@ -1083,3 +1083,20 @@ if __name__ == "__main__":
     print(f"📚 Docs: {'Enabled' if not IS_PROD else 'Disabled'}")
     print(f"🔐 Swagger Auth: Worker endpoint only")
     uvicorn.run(app, host="0.0.0.0", port=8000)
+# =========================
+# Render Debug Information
+# =========================
+@app.get("/debug/render")
+async def debug_render():
+    """Debug Render-specific issues"""
+    import sys
+    import os
+    
+    return {
+        "python_version": sys.version,
+        "port_from_env": os.getenv("PORT"),
+        "current_directory": os.getcwd(),
+        "files_at_root": os.listdir("."),
+        "data_files": os.listdir("data") if os.path.exists("data") else "data/ not found",
+        "api_files": os.listdir("api") if os.path.exists("api") else "api/ not found"
+    }
