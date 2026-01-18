@@ -131,6 +131,29 @@ class ItemDeduplicator:
         
         return merged
 
+# ===========================================
+# ADD THESE FUNCTIONS FOR BACKWARD COMPATIBILITY
+# ===========================================
+
+def compute_score(item: Dict[str, Any]) -> float:
+    """
+    Legacy function for backward compatibility.
+    Single-item version of calculate_scores.
+    
+    Used by: api/ingestion/radio.py
+    
+    Args:
+        item: Single item dictionary
+        
+    Returns:
+        Calculated score as float
+    """
+    calculator = ScoreCalculator()
+    return calculator.compute_item_score(item)
+
+# Alias for different naming conventions
+calculate_score = compute_score
+
 def calculate_scores(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Calculate scores for items - PURE FUNCTION, NO SIDE EFFECTS
