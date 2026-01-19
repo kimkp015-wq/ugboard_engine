@@ -3,15 +3,13 @@ name: TV Scraper
 on:
   schedule:
     - cron: '*/30 * * * *'  # Every 30 minutes
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:        # Manual trigger
 
 jobs:
   scrape-tv:
     runs-on: ubuntu-latest
-    
     env:
       ENGINE_URL: https://ugboard-engine.onrender.com
-      INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
     
     steps:
     - uses: actions/checkout@v4
@@ -23,16 +21,53 @@ jobs:
     
     - name: Install dependencies
       run: |
-        pip install aiohttp pyyaml
+        pip install aiohttp requests
     
     - name: Run TV Scraper
+      env:
+        INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
       run: |
-        python scripts/tv_scraper.py \
-          --engine-url $ENGINE_URL \
-          --token $INGEST_TOKEN
-      
-    - name: Notify success
-      if: success()
-      run: |
-        echo "✅ TV scraping completed successfully"
-        echo "Engine URL: $ENGINE_URL"
+        python -c "
+import asyncio
+import aiohttp
+import os
+import json
+from datetime import datetime
+
+async def test_scraper():
+    engine_url = '${{ env.ENGINE_URL }}'
+    token = os.getenv('INGEST_TOKEN')
+    
+    if not token:
+        print('❌ INGEST_TOKEN not set')
+        return
+    
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json'
+    }
+    
+    # Test data
+    payload = {
+        'items': [{
+            'title': 'GitHub Actions Test',
+            'artist': 'System Test',
+            'plays': 1,
+            'score': 50.0,
+            'station': 'GitHub Actions'
+        }],
+        'source': 'github_actions_test',
+        'timestamp': datetime.utcnow().isoformat()
+    }
+    
+    async with aiohttp.ClientSession(headers=headers) as session:
+        async with session.post(f'{engine_url}/ingest/tv', json=payload) as resp:
+            if resp.status == 200:
+                result = await resp.json()
+                print(f'✅ Test successful: {result[\"message\"]}')
+            else:
+                error = await resp.text()
+                print(f'❌ Test failed: {error}')
+
+asyncio.run(test_scraper())
+        "
