@@ -1,44 +1,74 @@
-# api/main_minimal.py
+# api/main_313.py - Python 3.13 Compatible
 """
-Minimal UG Board Engine - Works with broken dependencies
+UG Board Engine - Python 3.13 Emergency Version
+No pandas, no Cython dependencies
 """
 
 from fastapi import FastAPI, HTTPException
 from datetime import datetime
-import os
 import json
+import os
 from pathlib import Path
 import hashlib
-
-# Create minimal data directory
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
+from typing import List, Dict, Optional
 
 app = FastAPI(
-    title="UG Board Engine - Minimal Mode",
-    description="Running with limited dependencies",
+    title="UG Board Engine - Python 3.13 Emergency",
+    description="Running without pandas due to Python 3.13 compatibility issues",
     version="1.0.0"
 )
 
-# In-memory store for minimal operation
-store = {
-    "songs": [],
-    "ingestions": [],
-    "started_at": datetime.utcnow().isoformat()
-}
+# Simple in-memory store
+class UgandanMusicStore:
+    def __init__(self):
+        self.songs = []
+        self.artists = set()
+        self.ingestions = []
+    
+    def add_song(self, title: str, artist: str, **kwargs):
+        song_id = hashlib.md5(f"{title}{artist}".encode()).hexdigest()[:8]
+        
+        # Simple Ugandan artist check
+        ugandan_artists = {"bobi wine", "eddy kenzo", "sheebah", "daddy andre"}
+        is_ugandan = any(ug_artist in artist.lower() for ug_artist in ugandan_artists)
+        
+        song = {
+            "id": song_id,
+            "title": title,
+            "artist": artist,
+            "is_ugandan": is_ugandan,
+            "added_at": datetime.utcnow().isoformat(),
+            "plays": kwargs.get("plays", 0),
+            "score": kwargs.get("score", 0.0),
+            **kwargs
+        }
+        
+        self.songs.append(song)
+        self.artists.add(artist)
+        return song
+    
+    def get_top_songs(self, limit: int = 100):
+        # Simple scoring: more plays = higher rank
+        return sorted(
+            self.songs,
+            key=lambda x: (x.get("score", 0), x.get("plays", 0)),
+            reverse=True
+        )[:limit]
+
+store = UgandanMusicStore()
 
 @app.get("/")
 async def root():
     return {
         "status": "online",
-        "mode": "minimal",
-        "message": "UG Board Engine running in minimal mode",
-        "dependencies": "Core only - recovery in progress",
+        "python_version": "3.13",
+        "mode": "emergency_no_pandas",
+        "message": "Engine running without pandas due to Python 3.13 compatibility",
         "timestamp": datetime.utcnow().isoformat(),
-        "endpoints": {
-            "health": "/health",
-            "ingest_tv": "/ingest/tv (POST)",
-            "top100": "/charts/top100"
+        "stats": {
+            "total_songs": len(store.songs),
+            "unique_artists": len(store.artists),
+            "ugandan_songs": sum(1 for s in store.songs if s.get("is_ugandan"))
         }
     }
 
@@ -47,90 +77,62 @@ async def health():
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "store_size": len(store["songs"]),
-        "mode": "minimal_recovery"
+        "dependencies": {
+            "pandas": "disabled (Python 3.13 incompatible)",
+            "numba": "disabled",
+            "asyncpg": "disabled"
+        }
     }
 
 @app.post("/ingest/tv")
-async def ingest_tv(data: dict):
-    """Minimal TV ingestion endpoint"""
-    try:
-        items = data.get("items", [])
-        
-        # Simple validation
-        valid_items = []
-        for item in items:
-            if "title" in item and "artist" in item:
-                # Add metadata
-                item["id"] = hashlib.md5(
-                    f"{item['title']}{item['artist']}".encode()
-                ).hexdigest()[:8]
-                item["ingested_at"] = datetime.utcnow().isoformat()
-                item["source"] = "tv"
-                
-                valid_items.append(item)
-        
-        # Add to store
-        store["songs"].extend(valid_items)
-        store["ingestions"].append({
-            "source": "tv",
-            "count": len(valid_items),
-            "timestamp": datetime.utcnow().isoformat()
-        })
-        
-        # Save to file (persistence)
-        with open(DATA_DIR / "minimal_store.json", "w") as f:
-            json.dump(store, f, indent=2)
-        
-        return {
-            "status": "success",
-            "message": f"Ingested {len(valid_items)} items",
-            "mode": "minimal",
-            "total_songs": len(store["songs"])
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def ingest_tv(data: Dict):
+    """Simple TV ingestion without complex validation"""
+    items = data.get("items", [])
+    
+    ingested = []
+    for item in items[:50]:  # Limit to 50 items
+        if "title" in item and "artist" in item:
+            song = store.add_song(
+                title=item["title"],
+                artist=item["artist"],
+                plays=item.get("plays", 1),
+                score=item.get("score", 50.0),
+                source="tv",
+                station=data.get("source", "unknown")
+            )
+            ingested.append(song)
+    
+    return {
+        "status": "success",
+        "ingested": len(ingested),
+        "total_songs": len(store.songs),
+        "note": "Running in Python 3.13 compatibility mode"
+    }
 
 @app.get("/charts/top100")
 async def get_top100():
-    """Minimal chart endpoint"""
-    # Sort by ingestion time (simple ranking)
-    sorted_songs = sorted(
-        store["songs"],
-        key=lambda x: x.get("ingested_at", ""),
-        reverse=True
-    )[:20]  # Top 20 only
+    top_songs = store.get_top_songs(20)  # Get top 20 for now
     
     # Add ranks
-    for i, song in enumerate(sorted_songs, 1):
+    for i, song in enumerate(top_songs, 1):
         song["rank"] = i
     
     return {
-        "chart": "Uganda Top 100 (Minimal)",
+        "chart": "Uganda Top 100 (Emergency Mode)",
         "week": datetime.utcnow().strftime("%Y-W%W"),
-        "entries": sorted_songs,
-        "total": len(store["songs"]),
-        "mode": "minimal",
-        "timestamp": datetime.utcnow().isoformat()
+        "entries": top_songs,
+        "total_songs": len(store.songs),
+        "python_version": "3.13",
+        "limitations": [
+            "No pandas for data processing",
+            "Simple in-memory storage",
+            "Basic Ugandan artist detection"
+        ]
     }
-
-# Load existing data on startup
-if (DATA_DIR / "minimal_store.json").exists():
-    try:
-        with open(DATA_DIR / "minimal_store.json", "r") as f:
-            loaded = json.load(f)
-            store.update(loaded)
-        print(f"📁 Loaded {len(store['songs'])} songs from storage")
-    except:
-        pass
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Starting UG Board Engine (Minimal Mode)")
-    print("📡 Endpoints available:")
-    print("   GET  /          - Root endpoint")
-    print("   GET  /health    - Health check")
-    print("   POST /ingest/tv - TV ingestion")
-    print("   GET  /top100    - Chart data")
+    print("🚀 UG Board Engine - Python 3.13 Emergency Mode")
+    print("⚠️  Running WITHOUT pandas (incompatible with Python 3.13)")
+    print("📡 API available at http://localhost:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)
