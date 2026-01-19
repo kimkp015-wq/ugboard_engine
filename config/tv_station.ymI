@@ -1,116 +1,45 @@
-# UG Board TV Scraper Configuration
-version: "2.0.0"
-last_updated: "2026-01-19T12:00:00Z"
+# config/tv_stations.yaml
+version: "1.0"
+last_updated: "2026-01-19"
+description: "Ugandan TV Stations for Music Charting"
 
 stations:
-  NTV Uganda:
-    stream_url: "https://cdn.example.com/ntv/live/playlist.m3u8"
-    weight: 10
-    language: "english"
-    region: "central"
+  - name: "NTV Uganda"
+    url: "https://ntv.metropolitan.videopulse.co/ntv/ntv.m3u8"
+    region: "ug"
+    language: "en"
+    priority: 10
     enabled: true
-    check_interval: 300
-    capture_duration: 7
-    metadata:
-      type: "news"
-      owner: "Nation Media Group"
-      reliability_score: 0.8
-
-  NBS Television:
-    stream_url: "https://stream.nextmedia.co.ug/nbs/index.m3u8"
-    weight: 10
-    language: "english"
-    region: "central"
+    description: "National Television - English"
+    
+  - name: "NBS Television"
+    url: "https://cdn-ap-aka.metropolitan.videopulse.co/NTV/NTV.m3u8"
+    region: "ug"
+    language: "en"
+    priority: 9
     enabled: true
-    check_interval: 300
-    capture_duration: 7
-    metadata:
-      type: "news"
-      owner: "Next Media"
-      reliability_score: 0.7
-
-  Bukedde TV 1:
-    stream_url: "https://visiongroup.ug/bukedde1/master.m3u8"
-    weight: 8
-    language: "luganda"
-    region: "central"
+    description: "Next Broadcasting Services"
+    
+  - name: "Bukedde TV"
+    url: "https://cdn-ap-aka.metropolitan.videopulse.co/bukedde/bukedde.m3u8"
+    region: "ug"
+    language: "lug"
+    priority: 8
     enabled: true
-    check_interval: 300
-    capture_duration: 7
-    metadata:
-      type: "regional"
-      owner: "Vision Group"
-      reliability_score: 0.6
-
-  TV West:
-    stream_url: "https://visiongroup.ug/tvwest/live.m3u8"
-    weight: 7
+    description: "Vision Group Luganda channel"
+    
+  - name: "TV West"
+    url: "https://cdn-ap-aka.metropolitan.videopulse.co/tvwest/tvwest.m3u8"
+    region: "ug"
     language: "runyankole"
-    region: "western"
+    priority: 7
     enabled: true
-    check_interval: 300
-    capture_duration: 7
-    metadata:
-      type: "regional"
-      owner: "Vision Group"
-      reliability_score: 0.5
-
-  Baba TV:
-    stream_url: "https://babatv.ug/live/index.m3u8"
-    weight: 6
+    description: "Western Uganda regional channel"
+    
+  - name: "Baba TV"
+    url: "https://cdn-ap-aka.metropolitan.videopulse.co/babatv/babatv.m3u8"
+    region: "ug"
     language: "lusoga"
-    region: "eastern"
+    priority: 6
     enabled: true
-    check_interval: 300
-    capture_duration: 7
-    metadata:
-      type: "regional"
-      owner: "Baba Media Group"
-      reliability_score: 0.4
-
-  BBS Terefayina:
-    stream_url: "https://bbs.ug/live/master.m3u8"
-    weight: 6
-    language: "luganda"
-    region: "central"
-    enabled: true
-    check_interval: 300
-    capture_duration: 7
-    metadata:
-      type: "cultural"
-      owner: "Buganda Kingdom"
-      reliability_score: 0.5
-
-  Urban TV:
-    stream_url: "https://visiongroup.ug/urban/index.m3u8"
-    weight: 7
-    language: "english"
-    region: "central"
-    enabled: true
-    check_interval: 300
-    capture_duration: 7
-    metadata:
-      type: "entertainment"
-      owner: "Vision Group"
-      reliability_score: 0.6
-
-scraper_settings:
-  max_concurrent_stations: 10
-  default_capture_duration: 7
-  default_check_interval: 300
-  confidence_threshold: 0.3
-  archive_high_confidence: true
-  cleanup_old_files: true
-  save_interval_minutes: 5
-
-fingerprinting:
-  use_dejavu: true
-  use_acrcloud: true
-  dejavu_confidence_threshold: 0.3
-  acrcloud_confidence_threshold: 0.5
-
-logging:
-  level: "INFO"
-  file: "data/tv_logs/scraper.log"
-  max_size_mb: 10
-  backup_count: 5
+    description: "Busoga region channel"
