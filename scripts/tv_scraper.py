@@ -13,6 +13,9 @@ INGEST_TOKEN = os.getenv("INGEST_TOKEN", "your-token-here")  # Set in Render/Git
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+# In your TV scraper configuration
+INGEST_TOKEN = "1994199620002019866"  # Your actual token
+ENGINE_URL = "https://ugboard-engine.onrender.com"
 
 class UGTVScraper:
     def __init__(self):
