@@ -1,55 +1,58 @@
-# ================================
-# UG BOARD ENGINE - PRODUCTION REQUIREMENTS
-# Zero-fail dependency resolution for Python 3.11+
-# ================================
-
-# Core Framework (Stable, Widely Used)
+# Core Framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
 
-# HTTP & Web Scraping
-aiohttp==3.9.0
-beautifulsoup4==4.12.0
-requests==2.31.0
-lxml==5.2.2
+# Async HTTP & Caching
+aiohttp==3.9.1
+aiohttp-client-cache==0.14.3  # Updated from 0.11.2
+aiosqlite==0.19.0
+aiofiles==23.2.1
 
-# Audio Processing (Industry Standard Stack)
-librosa==0.10.2.post1
-numpy==1.26.4
-scipy==1.13.0
-soundfile==0.12.1
-resampy==0.4.2
-pydub==0.25.1
+# Data & Serialization
+pandas==2.1.4
+numpy==1.26.0
+orjson==3.9.10
+pyyaml==6.0.1
 
-# Database & Storage
-asyncpg==0.29.0
-redis==5.0.0
-aioredis==2.0.1
+# Database & ORM
 sqlalchemy==2.0.23
+asyncpg==0.29.0
+redis==5.0.1
+psycopg2-binary==2.9.9
 
-# Stream Processing (FFmpeg Integration)
-ffmpeg-python==0.2.0
-av==12.0.0  # PyAV - Better than ffmpeg-python for production
-
-# Alternative: Built-in Fingerprinting (No External Dependencies)
-# We'll implement our own using librosa + numpy
-
-# Monitoring & Observability
-prometheus-client==0.20.0
-structlog==24.1.0
-
-# Security
+# Authentication & Security
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-slowapi==0.1.8
+bcrypt==4.1.2
+python-multipart==0.0.6
 
-# Async Utilities
-aiofiles==23.2.1
-aiohttp-client-cache==0.11.2
+# Audio Processing & Fingerprinting
+librosa==0.10.1
+pydub==0.25.1
+chromaprint==1.5.1
+soundfile==0.12.1
+numba==0.58.1
 
-# Testing & Development
-pytest==8.1.1
-pytest-asyncio==0.23.5
+# Web Scraping
+beautifulsoup4==4.12.2
+lxml==4.9.3
+requests==2.31.0
+selenium==4.15.2
+
+# Utilities & Monitoring
+python-dotenv==1.0.0
+structlog==23.2.0
+prometheus-client==0.19.0
+sentry-sdk==1.38.0
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
 pytest-cov==4.1.0
+httpx==0.25.2
+
+# Rate Limiting
+slowapi==0.1.8
+limits==3.6.1
