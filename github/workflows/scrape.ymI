@@ -1,0 +1,97 @@
+name: TV & Radio Scraper
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # Every 30 minutes
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    env:
+      ENGINE_URL: https://ugboard-engine.onrender.com
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: pip install requests
+    
+    - name: Run TV Scraper Test
+      env:
+        INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
+      run: |
+        python -c "
+import requests
+import os
+from datetime import datetime
+
+engine_url = os.getenv('ENGINE_URL')
+token = os.getenv('INGEST_TOKEN')
+
+if not token:
+    print('❌ INGEST_TOKEN not set')
+    exit(1)
+
+# Test payload with Ugandan music
+payload = {
+    'items': [
+        {
+            'title': 'GitHub Actions - TV Test',
+            'artist': 'Bobi Wine',
+            'plays': 100,
+            'score': 95.0,
+            'station': 'GitHub Actions',
+            'genre': 'kadongo kamu'
+        },
+        {
+            'title': 'GitHub Actions - Radio Test',
+            'artist': 'Sheebah Karungi',
+            'plays': 90,
+            'score': 94.0,
+            'station': 'GitHub Actions',
+            'genre': 'dancehall'
+        }
+    ],
+    'source': 'github_actions_test',
+    'timestamp': datetime.utcnow().isoformat()
+}
+
+headers = {
+    'Authorization': f'Bearer {token}',
+    'Content-Type': 'application/json'
+}
+
+try:
+    response = requests.post(f'{engine_url}/ingest/tv', 
+                           json=payload, 
+                           headers=headers,
+                           timeout=30)
+    
+    if response.status_code == 200:
+        result = response.json()
+        print(f'✅ Success: {result[\"message\"]}')
+        print(f'   Valid: {result[\"valid_count\"]}, Invalid: {result[\"invalid_count\"]}')
+    else:
+        print(f'❌ Failed: HTTP {response.status_code}')
+        print(f'   Error: {response.text}')
+        
+except Exception as e:
+    print(f'❌ Exception: {e}')
+        "
+    
+    - name: Notify Status
+      run: |
+        if [ "${{ job.status }}" = "success" ]; then
+          echo "✅ Scraping completed successfully"
+          echo "Time: $(date)"
+          echo "Engine: $ENGINE_URL"
+        else
+          echo "❌ Scraping failed"
+          exit 1
+        fi
