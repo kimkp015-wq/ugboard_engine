@@ -1,58 +1,8 @@
-# Core Framework
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
-
-# Async HTTP & Caching
-aiohttp==3.9.1
-aiohttp-client-cache==0.14.3  # Updated from 0.11.2
-aiosqlite==0.19.0
-aiofiles==23.2.1
-
-# Data & Serialization
-pandas==2.1.4
-numpy==1.26.0
-orjson==3.9.10
-pyyaml==6.0.1
-
-# Database & ORM
-sqlalchemy==2.0.23
-asyncpg==0.29.0
-redis==5.0.1
-psycopg2-binary==2.9.9
-
-# Authentication & Security
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-bcrypt==4.1.2
-python-multipart==0.0.6
-
-# Audio Processing & Fingerprinting
+# Audio Processing & Fingerprinting (CORRECTED)
 librosa==0.10.1
 pydub==0.25.1
-chromaprint==1.5.1
+pyacoustid==1.2.2  # CORRECT: This provides chromaprint bindings
+audioread==3.0.0   # Required for audio file reading
 soundfile==0.12.1
 numba==0.58.1
-
-# Web Scraping
-beautifulsoup4==4.12.2
-lxml==4.9.3
-requests==2.31.0
-selenium==4.15.2
-
-# Utilities & Monitoring
-python-dotenv==1.0.0
-structlog==23.2.0
-prometheus-client==0.19.0
-sentry-sdk==1.38.0
-
-# Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-pytest-cov==4.1.0
-httpx==0.25.2
-
-# Rate Limiting
-slowapi==0.1.8
-limits==3.6.1
+llvmlite==0.41.1   # Required by numba
