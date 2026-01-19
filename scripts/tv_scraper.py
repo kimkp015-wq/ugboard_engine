@@ -16,6 +16,28 @@ logger = logging.getLogger(__name__)
 # In your TV scraper configuration
 INGEST_TOKEN = "1994199620002019866"  # Your actual token
 ENGINE_URL = "https://ugboard-engine.onrender.com"
+# In your TV scraper
+INGEST_TOKEN = "1994199620002019866"
+ENGINE_URL = "https://ugboard-engine.onrender.com"
+
+async def send_to_engine(songs):
+    """Send songs to UG Board Engine"""
+    payload = {
+        "items": songs,
+        "source": "tv_scraper",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {INGEST_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.post(f"{ENGINE_URL}/ingest/tv", 
+                              json=payload, 
+                              headers=headers) as response:
+            return await response.json()
 
 class UGTVScraper:
     def __init__(self):
