@@ -1,162 +1,38 @@
-name: TV Music Scraper
+name: TV Scraper
+
 on:
   schedule:
-    - cron: '*/30 * * * *'  # Runs every 30 minutes
-  workflow_dispatch:
-    inputs:
-      station:
-        description: 'Specific station to scrape (Leave blank for all)'
-        required: false
-      duration:
-        description: 'Audio capture duration in seconds'
-        required: false
-        default: '7'
-      discover:
-        description: 'Run stream discovery before scraping'
-        required: false
-        default: 'false'
+    - cron: '*/30 * * * *'  # Every 30 minutes
+  workflow_dispatch:  # Manual trigger
 
 jobs:
-  tv-scrape:
+  scrape-tv:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
     
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD || 'rootpassword' }}
-          MYSQL_DATABASE: dejavu_db
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=3
-
+    env:
+      ENGINE_URL: https://ugboard-engine.onrender.com
+      INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
+    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install aiohttp pyyaml
+    
+    - name: Run TV Scraper
+      run: |
+        python scripts/tv_scraper.py \
+          --engine-url $ENGINE_URL \
+          --token $INGEST_TOKEN
       
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-      
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg mysql-client libmysqlclient-dev
-          echo "FFmpeg version:"
-          ffmpeg -version | head -1
-      
-      - name: Cache Python dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-      
-      - name: Install Python dependencies
-        run: |
-          pip install -r requirements.txt
-          # Additional TV scraper dependencies
-          pip install dejavu-py yaml aiohttp beautifulsoup4
-      
-      - name: Wait for MySQL
-        run: |
-          for i in {1..30}; do
-            if mysqladmin ping -h "127.0.0.1" --silent; then
-              echo "MySQL is ready!"
-              break
-            fi
-            echo "Waiting for MySQL... ($i/30)"
-            sleep 2
-          done
-      
-      - name: Initialize Dejavu database
-        run: |
-          mysql -h 127.0.0.1 -u root -p${{ secrets.MYSQL_ROOT_PASSWORD || 'rootpassword' }} dejavu_db < scripts/dejavu_schema.sql
-          echo "Dejavu database initialized"
-      
-      - name: Discover stream URLs
-        if: ${{ github.event.inputs.discover == 'true' || github.event_name == 'workflow_dispatch' }}
-        env:
-          DISCOVERY_MODE: 'true'
-        run: |
-          echo "🔍 Running stream URL discovery..."
-          python scripts/tv_stream_finder.py --output data/tv_streams.json
-      
-      - name: Run TV Scraper
-        env:
-          UGBOARD_API_URL: ${{ secrets.UGBOARD_API_URL }}
-          INTERNAL_TOKEN: ${{ secrets.INTERNAL_TOKEN }}
-          ACRCLOUD_HOST: ${{ secrets.ACRCLOUD_HOST }}
-          ACRCLOUD_ACCESS_KEY: ${{ secrets.ACRCLOUD_ACCESS_KEY }}
-          ACRCLOUD_ACCESS_SECRET: ${{ secrets.ACRCLOUD_ACCESS_SECRET }}
-          DEJAVU_DB_HOST: 127.0.0.1
-          DEJAVU_DB_USER: root
-          DEJAVU_DB_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD || 'rootpassword' }}
-          DEJAVU_DB_NAME: dejavu_db
-          TV_SCRAPER_CONFIG: config/tv_stations.yaml
-        run: |
-          echo "🚀 Starting TV Scraper..."
-          echo "Configuration:"
-          echo "  - UGBOARD_API_URL: $UGBOARD_API_URL"
-          echo "  - Station: ${{ github.event.inputs.station || 'All stations' }}"
-          echo "  - Duration: ${{ github.event.inputs.duration }}s"
-          
-          # Build command arguments
-          ARGS=""
-          if [ -n "${{ github.event.inputs.station }}" ]; then
-            ARGS="$ARGS --station '${{ github.event.inputs.station }}'"
-          fi
-          ARGS="$ARGS --duration ${{ github.event.inputs.duration }}"
-          ARGS="$ARGS --config $TV_SCRAPER_CONFIG"
-          
-          # Run scraper with timeout
-          timeout 2400 python scripts/tv_scraper.py $ARGS
-          echo "✅ TV Scraper completed"
-      
-      - name: Upload results and logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tv-scraper-results-${{ github.run_number }}
-          path: |
-            temp/confirmed/
-            data/tv_streams.json
-            data/tv_logs/
-            config/
-          retention-days: 7
-      
-      - name: Generate summary report
-        if: always()
-        run: |
-          echo "## 📊 TV Scraper Run Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Run Details:**" >> $GITHUB_STEP_SUMMARY
-          echo "- 📅 Date: $(date)" >> $GITHUB_STEP_SUMMARY
-          echo "- 🏃 Run ID: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
-          echo "- 📡 Station: ${{ github.event.inputs.station || 'All stations' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- ⏱️ Duration: ${{ github.event.inputs.duration }} seconds" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Check for results
-          if [ -d "temp/confirmed" ] && [ "$(ls -A temp/confirmed 2>/dev/null)" ]; then
-            echo "✅ **SUCCESS** - Songs detected and archived" >> $GITHUB_STEP_SUMMARY
-            echo "Files saved in artifact: `tv-scraper-results-${{ github.run_number }}`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ **NO SONGS DETECTED** - Check logs for details" >> $GITHUB_STEP_SUMMARY
-          fi
-      
-      - name: Cleanup workspace
-        if: always()
-        run: |
-          rm -rf temp/audio_captures
-          echo "Workspace cleaned"
+    - name: Notify success
+      if: success()
+      run: |
+        echo "✅ TV scraping completed successfully"
+        echo "Engine URL: $ENGINE_URL"
