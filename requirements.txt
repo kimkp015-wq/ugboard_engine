@@ -1,22 +1,20 @@
-# requirements.txt - WORKING VERSION FOR IMMEDIATE DEPLOYMENT
-
-# Core Framework (FastAPI + Uvicorn)
+# requirements.txt - RENDER.COM COMPATIBLE
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
 
-# Database (use psycopg3 instead of psycopg2 for better compatibility)
+# Database
 sqlalchemy==2.0.23
-psycopg[binary]==3.1.18  # NEW: Use psycopg3 instead of psycopg2
+psycopg[binary]==3.1.18  # Use psycopg3 instead of psycopg2
 redis==5.0.1
 
-# Async HTTP
+# Async
 aiohttp==3.9.1
 aiofiles==23.2.1
 
-# Data Processing (use pandas 2.2.3 which has better Python 3.13 support)
-pandas==2.2.3  # UPDATED: Newer version with better compatibility
+# Data
+pandas==2.2.3  # Updated for better compatibility
 numpy==1.26.4
 orjson==3.9.12
 pyyaml==6.0.1
@@ -27,7 +25,7 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.1.2
 python-multipart==0.0.6
 
-# Web Scraping
+# Web
 beautifulsoup4==4.12.2
 lxml==4.9.3
 requests==2.31.0
@@ -36,9 +34,10 @@ requests==2.31.0
 python-dotenv==1.0.0
 structlog==23.2.0
 
-# Rate Limiting (skip limits package for now)
+# Rate limiting (CORRECTED VERSION)
 slowapi==0.1.8
+limits==3.14.1  # CORRECTED from 3.6.1 to 3.14.1
 
-# Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
+# Optional Audio (commented out for now)
+# librosa==0.10.1
+# soundfile==0.12.1
