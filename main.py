@@ -1,11 +1,14 @@
-# api/main.py - COMPLETE VERSION
-from fastapi import FastAPI, HTTPException, Header
+# api/main.py - WITH PROPER AUTHENTICATION
+from fastapi import FastAPI, HTTPException, Header, Depends, Security
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from datetime import datetime
 import os
 from typing import Optional, List
 from pydantic import BaseModel
 
-# Define app FIRST
+# Security
+security = HTTPBearer()
+
 app = FastAPI(
     title="UG Board Engine",
     description="Official Ugandan Music Chart System",
@@ -13,6 +16,27 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+# Get tokens from environment
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "admin-ug-board-2025")
+INGEST_TOKEN = os.getenv("INGEST_TOKEN", "1994199620002019866")
+INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "1994199620002019866")
+
+# Authentication functions
+def verify_admin_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if credentials.credentials != ADMIN_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+    return True
+
+def verify_ingest_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if credentials.credentials != INGEST_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid ingestion token")
+    return True
+
+def verify_internal_token(x_internal_token: Optional[str] = Header(None)):
+    if x_internal_token != INTERNAL_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid internal token")
+    return True
 
 # Pydantic models
 class SongItem(BaseModel):
@@ -22,25 +46,27 @@ class SongItem(BaseModel):
     score: Optional[float] = 0.0
     station: Optional[str] = None
     region: Optional[str] = "ug"
+    genre: Optional[str] = "afrobeat"
 
 class TVIngestionPayload(BaseModel):
     items: List[SongItem]
     source: str
     timestamp: Optional[str] = None
+    metadata: Optional[dict] = {}
 
 # Ugandan music database
 UGANDAN_SONGS = [
-    {"id": "1", "title": "Nalumansi", "artist": "Bobi Wine", "plays": 10000, "score": 95.5},
-    {"id": "2", "title": "Sitya Loss", "artist": "Eddy Kenzo", "plays": 8500, "score": 92.3},
-    {"id": "3", "title": "Mummy", "artist": "Daddy Andre", "plays": 7800, "score": 88.7},
-    {"id": "4", "title": "Bailando", "artist": "Sheebah Karungi", "plays": 9200, "score": 94.1},
-    {"id": "5", "title": "Tonny On Low", "artist": "Gravity Omutujju", "plays": 7500, "score": 87.2},
-    {"id": "6", "title": "Bweyagala", "artist": "Vyroota", "plays": 7200, "score": 86.5},
-    {"id": "7", "title": "Enjoy", "artist": "Geosteady", "plays": 6800, "score": 85.8},
-    {"id": "8", "title": "Sembera", "artist": "Feffe Busi", "plays": 6500, "score": 84.3},
+    {"id": "1", "title": "Nalumansi", "artist": "Bobi Wine", "plays": 10000, "score": 95.5, "genre": "kadongo kamu"},
+    {"id": "2", "title": "Sitya Loss", "artist": "Eddy Kenzo", "plays": 8500, "score": 92.3, "genre": "afrobeat"},
+    {"id": "3", "title": "Mummy", "artist": "Daddy Andre", "plays": 7800, "score": 88.7, "genre": "dancehall"},
+    {"id": "4", "title": "Bailando", "artist": "Sheebah Karungi", "plays": 9200, "score": 94.1, "genre": "dancehall"},
+    {"id": "5", "title": "Tonny On Low", "artist": "Gravity Omutujju", "plays": 7500, "score": 87.2, "genre": "hip hop"},
+    {"id": "6", "title": "Bweyagala", "artist": "Vyroota", "plays": 7200, "score": 86.5, "genre": "kidandali"},
+    {"id": "7", "title": "Enjoy", "artist": "Geosteady", "plays": 6800, "score": 85.8, "genre": "rnb"},
+    {"id": "8", "title": "Sembera", "artist": "Feffe Busi", "plays": 6500, "score": 84.3, "genre": "hip hop"},
 ]
 
-# Root endpoint
+# Root endpoint - Public
 @app.get("/")
 async def root():
     return {
@@ -50,17 +76,8 @@ async def root():
         "timestamp": datetime.utcnow().isoformat(),
         "focus": "Ugandan music and artists",
         "rule": "Foreign artists only allowed in collaborations with Ugandan artists",
-        "artist_statistics": {
-            "total_unique_artists": 20,
-            "ugandan_artists": 18,
-            "foreign_collaborators": 2,
-            "collaboration_rate": "25.0%"
-        },
-        "render": {
-            "service": "ugboard-engine",
-            "instance": "srv-d5mb",
-            "on_render": True
-        },
+        "environment": os.getenv("ENV", "development"),
+        "instance": "srv-d5mb",
         "endpoints": {
             "docs": "/docs",
             "health": "/health",
@@ -68,35 +85,32 @@ async def root():
             "regional_charts": "/charts/regions/{region}",
             "trending": "/charts/trending",
             "artist_info": "/artists/stats",
-            "ingestion": "/ingest/{source}",
-            "admin": "/admin/*"
+            "ingestion": "/ingest/{source} (Authenticated)",
+            "admin": "/admin/* (Admin only)"
         }
     }
 
-# Health endpoint
+# Health endpoint - Public
 @app.get("/health")
 async def health():
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "service": "ugboard-engine.onrender.com",
-        "instance": "srv-d5mb",
-        "focus": "Ugandan music charting"
+        "environment": os.getenv("ENV", "development"),
+        "tokens_configured": bool(ADMIN_TOKEN and INGEST_TOKEN)
     }
 
-# Charts endpoint
+# Charts endpoint - Public
 @app.get("/charts/top100")
 async def get_top100(limit: int = 100):
-    """Get Uganda Top 100 chart"""
+    """Get Uganda Top 100 chart - Public"""
     songs = UGANDAN_SONGS.copy()
-    
-    # Sort by score (descending)
     songs.sort(key=lambda x: x["score"], reverse=True)
     
-    # Add ranks
     for i, song in enumerate(songs[:limit], 1):
         song["rank"] = i
-        song["change"] = "same"  # Placeholder
+        song["change"] = "same"
     
     return {
         "chart": "Uganda Top 100",
@@ -104,130 +118,111 @@ async def get_top100(limit: int = 100):
         "entries": songs[:limit],
         "total_entries": len(UGANDAN_SONGS),
         "timestamp": datetime.utcnow().isoformat(),
-        "rules_applied": [
-            "Ugandan artists prioritized",
-            "Foreign collaborations validated",
-            "Weekly chart scoring"
-        ]
+        "access": "public"
     }
 
-# Regional charts
-@app.get("/charts/regions/{region}")
-async def get_region_chart(region: str):
-    """Get regional chart"""
-    valid_regions = ["ug", "eac", "afr", "ww"]
-    
-    if region not in valid_regions:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Invalid region. Must be one of: {', '.join(valid_regions)}"
-        )
-    
-    region_names = {
-        "ug": "Uganda",
-        "eac": "East African Community",
-        "afr": "Africa",
-        "ww": "Worldwide (Diaspora)"
-    }
-    
-    # Filter songs for region (simplified)
-    region_songs = UGANDAN_SONGS[:5]  # Top 5 for regional
-    
-    for i, song in enumerate(region_songs, 1):
-        song["rank"] = i
-        song["region"] = region
-    
-    return {
-        "region": region,
-        "region_name": region_names.get(region, "Unknown"),
-        "chart_name": f"UG Board - {region_names.get(region, 'Regional')} Chart",
-        "week": datetime.utcnow().strftime("%Y-W%W"),
-        "entries": region_songs,
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-# Trending songs
-@app.get("/charts/trending")
-async def get_trending(limit: int = 10):
-    """Get trending songs (last 24 hours)"""
-    trending = UGANDAN_SONGS[:3].copy()  # Top 3 as trending
-    
-    for i, song in enumerate(trending, 1):
-        song["trend_rank"] = i
-        song["velocity"] = "rising"
-        song["change"] = f"+{i}"
-    
-    return {
-        "chart": "Trending Now",
-        "period": "24 hours",
-        "entries": trending,
-        "updated": datetime.utcnow().isoformat()
-    }
-
-# Artist statistics
-@app.get("/artists/stats")
-async def get_artist_stats(artist: Optional[str] = None):
-    """Get artist statistics"""
-    if artist:
-        # Return specific artist
-        artist_songs = [s for s in UGANDAN_SONGS if artist.lower() in s["artist"].lower()]
-        
-        if not artist_songs:
-            raise HTTPException(status_code=404, detail=f"Artist '{artist}' not found")
-        
-        return {
-            "artist": artist,
-            "total_songs": len(artist_songs),
-            "total_plays": sum(s["plays"] for s in artist_songs),
-            "average_score": sum(s["score"] for s in artist_songs) / len(artist_songs),
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    else:
-        # Return overall stats
-        artists = list(set(s["artist"] for s in UGANDAN_SONGS))
-        
-        return {
-            "total_artists": len(artists),
-            "top_artists": [
-                {"name": "Bobi Wine", "chart_entries": 2, "total_plays": 18500},
-                {"name": "Eddy Kenzo", "chart_entries": 1, "total_plays": 8500},
-                {"name": "Sheebah Karungi", "chart_entries": 1, "total_plays": 9200},
-            ],
-            "timestamp": datetime.utcnow().isoformat()
-        }
-
-# TV Ingestion endpoint
+# TV Ingestion endpoint - Authenticated
 @app.post("/ingest/tv")
-async def ingest_tv(payload: TVIngestionPayload, authorization: Optional[str] = Header(None)):
-    """Ingest TV data with authentication"""
-    # Simple token check (in production, use proper validation)
-    expected_token = f"Bearer {os.getenv('INGEST_TOKEN', 'ugboard-ingest-2026')}"
+async def ingest_tv(
+    payload: TVIngestionPayload,
+    auth: bool = Depends(verify_ingest_token)
+):
+    """Ingest TV data - Requires INGEST_TOKEN"""
     
-    if authorization != expected_token:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid ingestion token"
-        )
+    # Validate Ugandan music rules
+    ugandan_artists = ["bobi wine", "eddy kenzo", "sheebah", "daddy andre", "gravity"]
+    valid_items = []
     
-    # Process items
-    processed = []
     for item in payload.items:
-        processed.append({
+        # Check if artist is Ugandan
+        artist_lower = item.artist.lower()
+        is_ugandan = any(ug_artist in artist_lower for ug_artist in ugandan_artists)
+        
+        if is_ugandan:
+            valid_items.append({
+                **item.dict(),
+                "ingested_at": datetime.utcnow().isoformat(),
+                "validated": True,
+                "is_ugandan": True
+            })
+    
+    return {
+        "status": "success",
+        "message": f"Ingested {len(valid_items)} Ugandan songs from TV",
+        "source": payload.source,
+        "valid_count": len(valid_items),
+        "invalid_count": len(payload.items) - len(valid_items),
+        "timestamp": datetime.utcnow().isoformat(),
+        "environment": os.getenv("ENV", "development")
+    }
+
+# Radio Ingestion endpoint - Authenticated
+@app.post("/ingest/radio")
+async def ingest_radio(
+    payload: TVIngestionPayload,
+    auth: bool = Depends(verify_ingest_token)
+):
+    """Ingest radio data - Requires INGEST_TOKEN"""
+    
+    valid_items = []
+    for item in payload.items:
+        valid_items.append({
             **item.dict(),
             "ingested_at": datetime.utcnow().isoformat(),
-            "validated": True
+            "source_type": "radio"
         })
     
     return {
         "status": "success",
-        "message": f"Ingested {len(processed)} songs from TV",
-        "source": payload.source,
-        "count": len(processed),
+        "message": f"Ingested {len(valid_items)} songs from radio",
+        "station": payload.source,
+        "count": len(valid_items),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+# Admin endpoints - Admin only
+@app.get("/admin/status", dependencies=[Depends(verify_admin_token)])
+async def admin_status():
+    """Admin status endpoint - Requires ADMIN_TOKEN"""
+    return {
+        "status": "admin_authenticated",
+        "environment": os.getenv("ENV", "development"),
+        "tokens": {
+            "admin_configured": bool(ADMIN_TOKEN),
+            "ingest_configured": bool(INGEST_TOKEN)
+        },
+        "statistics": {
+            "total_songs": len(UGANDAN_SONGS),
+            "unique_artists": len(set(s["artist"] for s in UGANDAN_SONGS)),
+            "total_plays": sum(s["plays"] for s in UGANDAN_SONGS)
+        },
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.post("/admin/week/publish", dependencies=[Depends(verify_admin_token)])
+async def publish_week():
+    """Publish weekly chart - Admin only"""
+    return {
+        "status": "success",
+        "message": "Week published successfully",
+        "week": datetime.utcnow().strftime("%Y-W%W"),
+        "published_at": datetime.utcnow().isoformat(),
+        "note": "Chart week is now immutable"
+    }
+
+# Internal endpoints - Service-to-service
+@app.post("/internal/health")
+async def internal_health(auth: bool = Depends(verify_internal_token)):
+    """Internal health check - Requires INTERNAL_TOKEN"""
+    return {
+        "status": "healthy",
+        "service": "ugboard-engine",
+        "environment": os.getenv("ENV", "development"),
         "timestamp": datetime.utcnow().isoformat(),
-        "validation": {
-            "total_received": len(payload.items),
-            "valid": len(processed),
-            "invalid": len(payload.items) - len(processed)
+        "metrics": {
+            "memory_usage": "N/A",
+            "uptime": "N/A",
+            "requests_served": "N/A"
         }
     }
 
@@ -238,5 +233,6 @@ async def http_exception_handler(request, exc):
         "error": exc.detail,
         "status_code": exc.status_code,
         "timestamp": datetime.utcnow().isoformat(),
-        "path": str(request.url.path)
+        "path": str(request.url.path),
+        "environment": os.getenv("ENV", "development")
     }
