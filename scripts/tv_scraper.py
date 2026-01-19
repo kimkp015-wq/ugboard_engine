@@ -1,63 +1,65 @@
-# Alternative fingerprinting using Chromaprint (AcoustID)
-import acoustid
-import hashlib
-import tempfile
+# Replace the fingerprinting section in tv_scraper.py
 
-class ChromaprintIdentifier:
-    """Production-grade audio fingerprinting using Chromaprint"""
+class TVScraperEngine:
+    def __init__(self, config_path: str = "config/tv_stations.yaml"):
+        # ... existing code ...
+        self.fingerprinter = UgandanMusicFingerprinter()
     
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("ACOUSTID_API_KEY", "")
+    def identify_song(self, audio_file: str) -> Optional[Dict[str, Any]]:
+        """
+        Identify song using custom fingerprinting
+        """
+        if not os.path.exists(audio_file):
+            return None
         
-    def fingerprint_audio(self, audio_file: str) -> Optional[str]:
-        """Generate fingerprint using Chromaprint"""
-        try:
-            # Generate fingerprint using ffmpeg + chromaprint
-            duration, fp = acoustid.fingerprint_file(audio_file)
-            
-            # Create hash of fingerprint for database lookup
-            fp_hash = hashlib.sha256(fp.encode()).hexdigest()
-            
+        # Extract fingerprint
+        fingerprint = self.fingerprinter.extract_fingerprint(audio_file)
+        if not fingerprint:
+            return None
+        
+        # Try to find match in database
+        match = self.fingerprinter.find_match(fingerprint, threshold=0.6)
+        
+        if match:
+            song_title, artist, confidence = match
             return {
-                "fingerprint": fp,
-                "fingerprint_hash": fp_hash,
-                "duration": duration,
-                "source": "chromaprint"
+                "song_title": song_title,
+                "artist": artist,
+                "confidence": confidence,
+                "source": "custom_fingerprinting",
+                "fingerprint_match": True
             }
-            
-        except Exception as e:
-            logger.error(f"Chromaprint fingerprinting failed: {e}")
-            return None
-    
-    def identify_song(self, audio_file: str) -> Optional[Dict]:
-        """Identify song using AcoustID API"""
-        if not self.api_key:
-            logger.warning("AcoustID API key not configured")
-            return None
         
-        try:
-            # Send to AcoustID API
-            results = acoustid.lookup(self.api_key, audio_file)
-            
-            if results and results.get("results"):
-                best_match = results["results"][0]
-                if best_match.get("score", 0) > 0.5:  # 50% confidence threshold
-                    recordings = best_match.get("recordings", [])
-                    if recordings:
-                        recording = recordings[0]
-                        return {
-                            "song_title": recording.get("title", "Unknown"),
-                            "artist": recording.get("artists", [{}])[0].get("name", "Unknown"),
-                            "confidence": best_match.get("score", 0),
-                            "duration": recording.get("duration", 0),
-                            "source": "acoustid_api",
-                            "metadata": {
-                                "recording_id": recording.get("id"),
-                                "release_id": recording.get("releases", [{}])[0].get("id", "")
-                            }
-                        }
-                        
-        except Exception as e:
-            logger.error(f"AcoustID identification failed: {e}")
-            
+        # Fallback to ACRCloud if available
+        if self.acrcloud_available:
+            return self._identify_acrcloud(audio_file)
+        
         return None
+    
+    def store_reference_tracks(self, reference_dir: str = "data/reference_tracks"):
+        """
+        Store known Ugandan songs for matching
+        Run this once to populate the database
+        """
+        import glob
+        
+        for audio_file in glob.glob(f"{reference_dir}/**/*.mp3", recursive=True):
+            try:
+                # Extract metadata from filename (format: Artist - Title.mp3)
+                filename = Path(audio_file).stem
+                if " - " in filename:
+                    artist, song_title = filename.split(" - ", 1)
+                else:
+                    artist, song_title = "Unknown", filename
+                
+                # Extract fingerprint
+                fingerprint = self.fingerprinter.extract_fingerprint(audio_file)
+                if fingerprint:
+                    # Store in database
+                    self.fingerprinter.store_fingerprint(
+                        fingerprint, song_title, artist
+                    )
+                    logger.info(f"Stored reference: {artist} - {song_title}")
+                    
+            except Exception as e:
+                logger.error(f"Failed to process {audio_file}: {e}")
