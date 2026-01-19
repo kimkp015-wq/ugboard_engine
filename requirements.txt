@@ -1,25 +1,24 @@
-# UG Board Engine - Python 3.11 FULL VERSION
+# requirements.txt - WORKING VERSION FOR IMMEDIATE DEPLOYMENT
+
+# Core Framework (FastAPI + Uvicorn)
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
 
-# Database
+# Database (use psycopg3 instead of psycopg2 for better compatibility)
 sqlalchemy==2.0.23
-asyncpg==0.29.0
+psycopg[binary]==3.1.18  # NEW: Use psycopg3 instead of psycopg2
 redis==5.0.1
-psycopg2-binary==2.9.9
-aiosqlite==0.19.0
 
 # Async HTTP
 aiohttp==3.9.1
 aiofiles==23.2.1
-aiohttp-client-cache==0.14.3
 
-# Data Processing
-pandas==2.1.4
+# Data Processing (use pandas 2.2.3 which has better Python 3.13 support)
+pandas==2.2.3  # UPDATED: Newer version with better compatibility
 numpy==1.26.4
-orjson==3.9.10
+orjson==3.9.12
 pyyaml==6.0.1
 
 # Authentication
@@ -27,13 +26,6 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.1.2
 python-multipart==0.0.6
-
-# Audio Processing
-librosa==0.10.1
-soundfile==0.12.1
-numba==0.58.1
-llvmlite==0.41.1
-audioread==3.0.0
 
 # Web Scraping
 beautifulsoup4==4.12.2
@@ -43,15 +35,10 @@ requests==2.31.0
 # Utilities
 python-dotenv==1.0.0
 structlog==23.2.0
-prometheus-client==0.19.0
-sentry-sdk==1.38.0
 
-# Rate Limiting
+# Rate Limiting (skip limits package for now)
 slowapi==0.1.8
-limits==3.14.1
 
 # Testing
 pytest==7.4.3
 pytest-asyncio==0.21.1
-pytest-cov==4.1.0
-httpx==0.25.2
