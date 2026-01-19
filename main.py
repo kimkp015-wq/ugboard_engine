@@ -1,7 +1,32 @@
 # api/main.py - SIMPLE WORKING VERSION
 from fastapi import FastAPI
 from datetime import datetime
+from fastapi import FastAPI
+from datetime import datetime
 
+app = FastAPI(title="UG Board Engine", version="1.0.0")
+
+@app.get("/")
+async def root():
+    return {
+        "service": "UG Board Engine",
+        "status": "online",
+        "version": "1.0.0",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
+
+@app.get("/charts/top100")
+async def get_top100():
+    return {
+        "chart": "Uganda Top 100",
+        "week": datetime.utcnow().strftime("%Y-W%W"),
+        "entries": [],
+        "timestamp": datetime.utcnow().isoformat()
+    }
 # Define app FIRST
 app = FastAPI(
     title="UG Board Engine",
