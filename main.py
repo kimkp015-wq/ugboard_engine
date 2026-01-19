@@ -7,7 +7,89 @@ Root level to fix import issues
 # Add these imports if not already there
 from fastapi import HTTPException, Query
 from typing import List, Optional
+# Add these imports if not already there
+from typing import Optional, List
+from pydantic import BaseModel
 
+# Define request models
+class SongItem(BaseModel):
+    title: str
+    artist: str
+    plays: Optional[int] = 0
+    score: Optional[float] = 0.0
+    station: Optional[str] = None
+
+class TVIngestionPayload(BaseModel):
+    items: List[SongItem]
+    source: str
+    timestamp: Optional[str] = None
+
+# Add these endpoints
+@app.get("/charts/top100")
+async def get_top100(limit: int = 100):
+    """Get Uganda Top 100 chart"""
+    return {
+        "chart": "Uganda Top 100",
+        "week": datetime.utcnow().strftime("%Y-W%W"),
+        "entries": [],
+        "total_entries": 0,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.get("/charts/regions/{region}")
+async def get_region_chart(region: str):
+    """Get regional chart"""
+    valid_regions = ["ug", "eac", "afr", "ww"]
+    
+    if region not in valid_regions:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Invalid region. Valid: {', '.join(valid_regions)}"
+        )
+    
+    return {
+        "region": region,
+        "name": {
+            "ug": "Uganda",
+            "eac": "East African Community",
+            "afr": "Africa",
+            "ww": "Worldwide"
+        }.get(region),
+        "entries": [],
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.get("/charts/trending")
+async def get_trending():
+    """Get trending songs"""
+    return {
+        "chart": "Trending Now",
+        "period": "24 hours",
+        "entries": [],
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.post("/ingest/tv")
+async def ingest_tv(payload: TVIngestionPayload, authorization: Optional[str] = Header(None)):
+    """TV ingestion endpoint with authentication"""
+    # Verify token
+    expected_token = f"Bearer {os.getenv('INGEST_TOKEN')}"
+    if authorization != expected_token:
+        raise HTTPException(status_code=401, detail="Invalid ingestion token")
+    
+    # Process items
+    valid_items = []
+    for item in payload.items:
+        # Validate Ugandan music rules here
+        valid_items.append(item.dict())
+    
+    return {
+        "status": "success",
+        "source": payload.source,
+        "ingested": len(valid_items),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
 # Add these routes after your existing routes
 
 @app.get("/charts/top100")
