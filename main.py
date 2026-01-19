@@ -545,7 +545,11 @@ async def ingest_tv(
             status_code=500, 
             detail=f"Internal server error: {str(e)}"
         )
-
+"endpoints": {
+    "tv_ingestion": "/ingest/tv",
+    "tv_scraper_status": "https://github.com/your-org/ugboard_engine/actions",
+    # ... rest remains the same
+}
 # =========================
 # Ingestion Category - Radio ENDPOINT
 # =========================
