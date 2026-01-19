@@ -7,6 +7,18 @@ import logging
 import os
 from pathlib import Path
 
+# Update the TV scraper configuration
+TV_SCRAPER_CONFIG = {
+    "engine_url": "https://ugboard-engine.onrender.com",
+    "ingest_token": "YOUR_ACTUAL_TOKEN_HERE",  # Get from Render
+    "stations": [
+        {"name": "NTV Uganda", "url": "https://ntv.m3u8", "enabled": True},
+        {"name": "NBS Television", "url": "https://nbs.m3u8", "enabled": True},
+        {"name": "Bukedde TV", "url": "https://bukedde.m3u8", "enabled": True},
+    ],
+    "scrape_interval": 1800  # 30 minutes
+}
+
 logger = logging.getLogger(__name__)
 
 class TVScraper:
