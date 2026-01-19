@@ -141,7 +141,11 @@ async def main():
     
     # Setup logging
     logging.basicConfig(level=logging.INFO)
-    
+
+    # Update the configuration section
+INGEST_TOKEN = os.getenv("INGEST_TOKEN", "your-token-from-render")
+ENGINE_URL = "https://ugboard-engine.onrender.com"
+
     # Initialize scraper
     scraper = TVScraper(args.engine_url, args.token)
     
