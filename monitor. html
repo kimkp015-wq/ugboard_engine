@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>UG Board Engine Monitor</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .healthy { background: #d4edda; color: #155724; }
+        .unhealthy { background: #f8d7da; color: #721c24; }
+        .endpoint { margin: 5px 0; padding: 5px; background: #f8f9fa; }
+    </style>
+</head>
+<body>
+    <h1>UG Board Engine Monitor</h1>
+    <p>Engine URL: <code>https://ugboard-engine.onrender.com</code></p>
+    
+    <div id="status"></div>
+    
+    <script>
+        const engineUrl = 'https://ugboard-engine.onrender.com';
+        const endpoints = [
+            { name: 'Root', path: '/' },
+            { name: 'Health', path: '/health' },
+            { name: 'Top 100', path: '/charts/top100' },
+            { name: 'Trending', path: '/charts/trending' }
+        ];
+        
+        async function checkEngine() {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = '<h3>Checking endpoints...</h3>';
+            
+            for (const endpoint of endpoints) {
+                try {
+                    const response = await fetch(engineUrl + endpoint.path);
+                    const isHealthy = response.ok;
+                    
+                    const endpointDiv = document.createElement('div');
+                    endpointDiv.className = `endpoint ${isHealthy ? 'healthy' : 'unhealthy'}`;
+                    endpointDiv.innerHTML = `
+                        <strong>${endpoint.name}</strong>: ${endpoint.path}
+                        <br>Status: ${isHealthy ? '✅ Healthy' : '❌ Unhealthy'}
+                        <br>HTTP: ${response.status}
+                    `;
+                    
+                    statusDiv.appendChild(endpointDiv);
+                } catch (error) {
+                    const endpointDiv = document.createElement('div');
+                    endpointDiv.className = 'endpoint unhealthy';
+                    endpointDiv.innerHTML = `
+                        <strong>${endpoint.name}</strong>: ${endpoint.path}
+                        <br>Status: ❌ Error: ${error.message}
+                    `;
+                    statusDiv.appendChild(endpointDiv);
+                }
+            }
+            
+            const timestamp = document.createElement('p');
+            timestamp.innerHTML = `<em>Last checked: ${new Date().toLocaleString()}</em>`;
+            statusDiv.appendChild(timestamp);
+        }
+        
+        // Check on load
+        checkEngine();
+        
+        // Check every 5 minutes
+        setInterval(checkEngine, 300000);
+    </script>
+</body>
+</html>
