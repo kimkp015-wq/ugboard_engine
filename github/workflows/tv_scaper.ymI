@@ -12,63 +12,36 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Python
+    - name: Set up Python 3.11
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
     
     - name: Install dependencies
       run: |
-        pip install requests
-        
-    - name: Run TV Scraper Test
+        pip install aiohttp pyyaml
+    
+    - name: Run TV Scraper
       env:
-        ENGINE_URL: https://ugboard-engine.onrender.com
         INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
       run: |
-        python -c "
-import os
-import requests
-from datetime import datetime
-
-engine_url = os.getenv('ENGINE_URL')
-token = os.getenv('INGEST_TOKEN')
-
-if not token:
-    print('❌ INGEST_TOKEN not set in GitHub Secrets')
-    exit(1)
-
-# Test payload
-payload = {
-    'items': [{
-        'title': 'GitHub Actions Test',
-        'artist': 'System Bot',
-        'plays': 1,
-        'score': 50.0,
-        'station': 'GitHub Actions'
-    }],
-    'source': 'github_actions',
-    'timestamp': datetime.utcnow().isoformat()
-}
-
-headers = {
-    'Authorization': f'Bearer {token}',
-    'Content-Type': 'application/json'
-}
-
-try:
-    response = requests.post(f'{engine_url}/ingest/tv', 
-                           json=payload, 
-                           headers=headers,
-                           timeout=10)
+        python scripts/tv_scraper.py
     
-    if response.status_code == 200:
-        result = response.json()
-        print(f'✅ TV ingestion successful: {result[\"message\"]}')
-    else:
-        print(f'❌ TV ingestion failed: {response.status_code}')
-        print(f'Error: {response.text}')
-        
-except Exception as e:
-    print(f'❌ Request failed: {e}')
-        "
+    - name: Notify on success
+      if: success()
+      run: |
+        echo "✅ TV scraping completed successfully"
+        echo "Time: $(date)"
+        echo "Engine: https://ugboard-engine.onrender.com"
+    
+    - name: Notify on failure
+      if: failure()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: 'TV Scraper Failed',
+            body: 'TV scraper workflow failed at $(date). Check logs.'
+          })
