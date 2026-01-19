@@ -1,3 +1,5 @@
+# requirements.txt - UG Board Engine (No Chromaprint)
+
 # Core Framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
@@ -6,13 +8,13 @@ pydantic-settings==2.1.0
 
 # Async HTTP & Caching
 aiohttp==3.9.1
-aiohttp-client-cache==0.14.3  # Updated from 0.11.2
+aiohttp-client-cache==0.14.3
 aiosqlite==0.19.0
 aiofiles==23.2.1
 
 # Data & Serialization
 pandas==2.1.4
-numpy==1.26.0
+numpy==1.26.2
 orjson==3.9.10
 pyyaml==6.0.1
 
@@ -28,12 +30,12 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.1.2
 python-multipart==0.0.6
 
-# Audio Processing & Fingerprinting
+# Audio Processing (Your actual dependencies)
 librosa==0.10.1
-pydub==0.25.1
-chromaprint==1.5.1
 soundfile==0.12.1
 numba==0.58.1
+llvmlite==0.41.1
+audioread==3.0.0
 
 # Web Scraping
 beautifulsoup4==4.12.2
@@ -56,12 +58,3 @@ httpx==0.25.2
 # Rate Limiting
 slowapi==0.1.8
 limits==3.6.1
-
-# Audio Processing & Fingerprinting (CORRECTED)
-librosa==0.10.1
-pydub==0.25.1
-pyacoustid==1.2.2  # CORRECT: This provides chromaprint bindings
-audioread==3.0.0   # Required for audio file reading
-soundfile==0.12.1
-numba==0.58.1
-llvmlite==0.41.1   # Required by numba
