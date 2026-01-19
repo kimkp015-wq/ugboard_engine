@@ -4,6 +4,114 @@ UG Board Engine - Render.com Deployment
 Root level to fix import issues
 """
 
+# Add these imports if not already there
+from fastapi import HTTPException, Query
+from typing import List, Optional
+
+# Add these routes after your existing routes
+
+@app.get("/charts/top100")
+async def get_top100(limit: int = Query(100, ge=1, le=100)):
+    """Get Uganda Top 100 chart"""
+    # This would come from your database
+    # For now, return sample data
+    sample_chart = [
+        {"rank": 1, "title": "Nalumansi", "artist": "Bobi Wine", "score": 95.5, "plays": 10000, "change": "up"},
+        {"rank": 2, "title": "Sitya Loss", "artist": "Eddy Kenzo", "score": 92.3, "plays": 8500, "change": "same"},
+        {"rank": 3, "title": "Mummy", "artist": "Daddy Andre", "score": 88.7, "plays": 7800, "change": "down"},
+        {"rank": 4, "title": "Bailando", "artist": "Sheebah Karungi", "score": 94.1, "plays": 9200, "change": "up"},
+        {"rank": 5, "title": "Tonny On Low", "artist": "Gravity Omutujju", "score": 87.2, "plays": 7500, "change": "new"},
+    ]
+    
+    return {
+        "chart": "Uganda Top 100",
+        "week": datetime.utcnow().strftime("%Y-W%W"),
+        "entries": sample_chart[:limit],
+        "total_entries": 100,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.get("/charts/regions/{region}")
+async def get_region_chart(region: str = "ug"):
+    """Get regional chart"""
+    valid_regions = ["ug", "eac", "afr", "ww"]
+    
+    if region not in valid_regions:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Invalid region. Must be one of: {', '.join(valid_regions)}"
+        )
+    
+    region_names = {
+        "ug": "Uganda",
+        "eac": "East African Community", 
+        "afr": "Africa",
+        "ww": "Worldwide (Diaspora)"
+    }
+    
+    # Sample data - replace with actual data
+    region_data = {
+        "rank": 1,
+        "title": "Sample Song",
+        "artist": "Sample Artist",
+        "region": region,
+        "score": 85.0
+    }
+    
+    return {
+        "region": region,
+        "region_name": region_names.get(region, "Unknown"),
+        "chart_name": f"{region_names.get(region, 'Regional')} Chart",
+        "week": datetime.utcnow().strftime("%Y-W%W"),
+        "entries": [region_data],
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.get("/charts/trending")
+async def get_trending(limit: int = Query(10, ge=1, le=50)):
+    """Get trending songs (last 24 hours)"""
+    trending = [
+        {"title": "Nalumansi", "artist": "Bobi Wine", "trend_score": 95.5, "change": "+2", "velocity": "rising"},
+        {"title": "Sitya Loss", "artist": "Eddy Kenzo", "trend_score": 92.3, "change": "+1", "velocity": "rising"},
+        {"title": "Bailando", "artist": "Sheebah Karungi", "trend_score": 94.1, "change": "+3", "velocity": "rising"},
+        {"title": "Mummy", "artist": "Daddy Andre", "trend_score": 88.7, "change": "-1", "velocity": "falling"},
+    ]
+    
+    return {
+        "chart": "Trending Now",
+        "period": "24 hours",
+        "entries": trending[:limit],
+        "updated": datetime.utcnow().isoformat()
+    }
+
+@app.get("/artists/stats")
+async def get_artist_stats(artist: Optional[str] = None):
+    """Get artist statistics"""
+    if artist:
+        # Return specific artist stats
+        return {
+            "artist": artist,
+            "total_songs": 15,
+            "total_plays": 150000,
+            "highest_chart_position": 1,
+            "weeks_on_chart": 52,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    else:
+        # Return overall stats
+        return {
+            "total_artists": 20,
+            "ugandan_artists": 18,
+            "foreign_collaborators": 2,
+            "collaboration_rate": "25%",
+            "top_artists": [
+                {"name": "Bobi Wine", "chart_entries": 5, "total_plays": 50000},
+                {"name": "Eddy Kenzo", "chart_entries": 4, "total_plays": 45000},
+                {"name": "Sheebah Karungi", "chart_entries": 3, "total_plays": 42000},
+            ],
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
 from fastapi import FastAPI, HTTPException
 from datetime import datetime
 import os
