@@ -4,66 +4,95 @@
     <title>UG Board Engine Monitor</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
-        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
-        .healthy { background: #d4edda; color: #155724; }
-        .unhealthy { background: #f8d7da; color: #721c24; }
-        .endpoint { margin: 5px 0; padding: 5px; background: #f8f9fa; }
+        .card { border: 1px solid #ddd; padding: 15px; margin: 10px; border-radius: 5px; }
+        .healthy { border-left: 5px solid #28a745; }
+        .unhealthy { border-left: 5px solid #dc3545; }
+        .endpoint { margin: 5px 0; padding: 8px; background: #f8f9fa; }
     </style>
 </head>
 <body>
     <h1>UG Board Engine Monitor</h1>
-    <p>Engine URL: <code>https://ugboard-engine.onrender.com</code></p>
+    <p>Monitoring: <code>https://ugboard-engine.onrender.com</code></p>
     
-    <div id="status"></div>
+    <div class="card">
+        <h3>System Status</h3>
+        <div id="system-status">Checking...</div>
+    </div>
+    
+    <div class="card">
+        <h3>API Endpoints</h3>
+        <div id="endpoints-status"></div>
+    </div>
     
     <script>
-        const engineUrl = 'https://ugboard-engine.onrender.com';
-        const endpoints = [
-            { name: 'Root', path: '/' },
-            { name: 'Health', path: '/health' },
-            { name: 'Top 100', path: '/charts/top100' },
-            { name: 'Trending', path: '/charts/trending' }
-        ];
+        const ENGINE_URL = 'https://ugboard-engine.onrender.com';
         
-        async function checkEngine() {
-            const statusDiv = document.getElementById('status');
-            statusDiv.innerHTML = '<h3>Checking endpoints...</h3>';
+        async function checkSystem() {
+            // Check root endpoint
+            try {
+                const rootResponse = await fetch(ENGINE_URL + '/');
+                const rootData = await rootResponse.json();
+                
+                document.getElementById('system-status').innerHTML = `
+                    <div class="endpoint healthy">
+                        <strong>Service:</strong> ${rootData.service}<br>
+                        <strong>Status:</strong> <span style="color: green">${rootData.status}</span><br>
+                        <strong>Version:</strong> ${rootData.version}<br>
+                        <strong>Last Check:</strong> ${new Date().toLocaleTimeString()}
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('system-status').innerHTML = `
+                    <div class="endpoint unhealthy">
+                        <strong>Error:</strong> ${error.message}<br>
+                        <strong>Status:</strong> <span style="color: red">OFFLINE</span>
+                    </div>
+                `;
+            }
+            
+            // Check all endpoints
+            const endpoints = [
+                { path: '/health', name: 'Health Check' },
+                { path: '/charts/top100?limit=1', name: 'Charts API' },
+                { path: '/docs', name: 'API Documentation' }
+            ];
+            
+            const endpointsDiv = document.getElementById('endpoints-status');
+            endpointsDiv.innerHTML = '';
             
             for (const endpoint of endpoints) {
                 try {
-                    const response = await fetch(engineUrl + endpoint.path);
+                    const response = await fetch(ENGINE_URL + endpoint.path);
                     const isHealthy = response.ok;
                     
                     const endpointDiv = document.createElement('div');
                     endpointDiv.className = `endpoint ${isHealthy ? 'healthy' : 'unhealthy'}`;
                     endpointDiv.innerHTML = `
-                        <strong>${endpoint.name}</strong>: ${endpoint.path}
-                        <br>Status: ${isHealthy ? '✅ Healthy' : '❌ Unhealthy'}
-                        <br>HTTP: ${response.status}
+                        <strong>${endpoint.name}</strong><br>
+                        Path: ${endpoint.path}<br>
+                        Status: ${isHealthy ? '✅ Healthy' : '❌ Unhealthy'}<br>
+                        HTTP: ${response.status}
                     `;
                     
-                    statusDiv.appendChild(endpointDiv);
+                    endpointsDiv.appendChild(endpointDiv);
                 } catch (error) {
                     const endpointDiv = document.createElement('div');
                     endpointDiv.className = 'endpoint unhealthy';
                     endpointDiv.innerHTML = `
-                        <strong>${endpoint.name}</strong>: ${endpoint.path}
-                        <br>Status: ❌ Error: ${error.message}
+                        <strong>${endpoint.name}</strong><br>
+                        Path: ${endpoint.path}<br>
+                        Status: ❌ Error: ${error.message}
                     `;
-                    statusDiv.appendChild(endpointDiv);
+                    endpointsDiv.appendChild(endpointDiv);
                 }
             }
-            
-            const timestamp = document.createElement('p');
-            timestamp.innerHTML = `<em>Last checked: ${new Date().toLocaleString()}</em>`;
-            statusDiv.appendChild(timestamp);
         }
         
-        // Check on load
-        checkEngine();
+        // Initial check
+        checkSystem();
         
-        // Check every 5 minutes
-        setInterval(checkEngine, 300000);
+        // Check every minute
+        setInterval(checkSystem, 60000);
     </script>
 </body>
 </html>
