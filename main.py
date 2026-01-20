@@ -1,81 +1,71 @@
 """
-UG Board Engine - Working Version (TV Scraper Import Fixed)
+UG Board Engine - Working Production Version
 """
 import os
+import sys
+from pathlib import Path
 import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, HTTPException, Header, Depends, Query
+from fastapi import FastAPI, HTTPException, Header, Depends, BackgroundTasks, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-# Configure logging without file handler
+# ====== FIX: CREATE LOGS DIRECTORY ======
+logs_dir = Path("logs")
+logs_dir.mkdir(exist_ok=True)
+
+# ====== CONFIGURE LOGGING ======
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-# Security tokens - YOUR ORIGINAL VALUES
+# ====== SECURITY TOKENS ======
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "admin-ug-board-2025")
 INGEST_TOKEN = os.getenv("INGEST_TOKEN", "1994199620002019866")
 INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "1994199620002019866")
 
 security = HTTPBearer()
 
-# ====== FIX: MOCK SCRAPER (NO FILE IMPORT) ======
+# ====== SCRAPER IMPORT ======
 TV_SCRAPER_AVAILABLE = False
+tv_scraper = None
 
-class MockTVScraper:
-    """Mock TV scraper for demonstration"""
-    async def scrape_station(self, station_name: str) -> List[Dict[str, Any]]:
-        logger.info(f"Mock scraping station: {station_name}")
-        return [
-            {
-                "title": f"Nalumansi - {station_name} Edition", 
-                "artist": "Bobi Wine", 
-                "plays": 150 + len(station_name) * 10,
-                "timestamp": datetime.utcnow().isoformat(),
-                "duration": "3:45",
-                "category": "music"
-            },
-            {
-                "title": f"Sitya Loss - {station_name} Mix", 
-                "artist": "Eddy Kenzo", 
-                "plays": 120 + len(station_name) * 8,
-                "timestamp": datetime.utcnow().isoformat(),
-                "duration": "4:20",
-                "category": "music"
-            }
-        ]
-
-tv_scraper = MockTVScraper()
-
-# ====== SCRAPER CONFIGURATION ======
-SCRAPER_CONFIG = {
-    "stations": ["ntv", "bukedde", "sanyuka", "spark"],
-    "scrape_interval": 3600,
-    "max_scraping_time": 300,
-    "enable_auto_scrape": False
-}
-
-# ====== GLOBAL STATE ======
-scraping_state = {
-    "last_scrape_time": None,
-    "is_scraping": False,
-    "scrape_results": {},
-    "errors": []
-}
-
-app = FastAPI(
-    title="UG Board Engine",
-    version="7.0.0",
-    description="UG Board Engine with TV Scraping Integration",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
+try:
+    # Try to import from scripts directory
+    sys.path.insert(0, str(Path(__file__).parent / "scripts"))
+    from tv_scraper import TVScraper
+    
+    # Initialize scraper
+    tv_scraper = TVScraper()
+    TV_SCRAPER_AVAILABLE = True
+    logger.info("✅ TV Scraper imported successfully from scripts/tv_scraper.py")
+    
+except ImportError as e:
+    logger.warning(f"⚠️ Could not import TVScraper: {e}")
+    logger.info("📺 Using mock scraper instead")
+    
+    # Mock scraper as fallback
+    class MockScraper:
+        async def scrape_station(self, station_name: str) -> List[Dict[str, Any]]:
+            logger.info(f"Mock scraping station: {station_name}")
+            return [
+                {
+                    "title": f"Demo Song - {station_name}",
+                    "artist": "Demo Artist",
+                    "plays": 100,
+                    "score": 85.0,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "station": station_name
+                }
+            ]
+    
+    tv_scraper = MockScraper()
+    TV_SCRAPER_AVAILABLE = False
 
 # ====== MODELS ======
 class SongItem(BaseModel):
@@ -84,26 +74,11 @@ class SongItem(BaseModel):
     plays: Optional[int] = 0
     score: Optional[float] = 0.0
     station: Optional[str] = None
+    timestamp: Optional[str] = None
 
 class IngestPayload(BaseModel):
     items: List[SongItem]
     source: str
-
-# ====== AUTHENTICATION ======
-def verify_admin(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    if credentials.credentials != ADMIN_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid admin token")
-    return True
-
-def verify_ingest(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    if credentials.credentials != INGEST_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid ingestion token")
-    return True
-
-def verify_internal(x_internal_token: Optional[str] = Header(None)):
-    if x_internal_token != INTERNAL_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid internal token")
-    return True
 
 # ====== DATABASE ======
 class Database:
@@ -117,16 +92,32 @@ class Database:
             song_dict["ingested_at"] = datetime.utcnow().isoformat()
             song_dict["id"] = f"song_{len(self.songs) + 1}"
             self.songs.append(song_dict)
-        
-        # Keep only last 1000 songs
-        if len(self.songs) > 1000:
-            self.songs = self.songs[-1000:]
             
     def get_top_songs(self, limit: int = 100):
         sorted_songs = sorted(self.songs, key=lambda x: x.get("score", 0), reverse=True)
         return sorted_songs[:limit]
 
 db = Database()
+
+# ====== FASTAPI APP ======
+app = FastAPI(
+    title="UG Board Engine",
+    version="7.0.0",
+    description="Official Ugandan Music Chart System",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# ====== AUTHENTICATION ======
+def verify_admin(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if credentials.credentials != ADMIN_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+    return True
+
+def verify_ingest(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if credentials.credentials != INGEST_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid ingestion token")
+    return True
 
 # ====== API ENDPOINTS ======
 @app.get("/")
@@ -136,9 +127,9 @@ async def root():
         "version": "7.0.0",
         "status": "online",
         "timestamp": datetime.utcnow().isoformat(),
+        "scraper_available": TV_SCRAPER_AVAILABLE,
         "docs": "/docs",
-        "health": "/health",
-        "scraper": "mock_mode"
+        "health": "/health"
     }
 
 @app.get("/health")
@@ -148,7 +139,7 @@ async def health():
         "timestamp": datetime.utcnow().isoformat(),
         "service": "ugboard-engine.onrender.com",
         "database_songs": len(db.songs),
-        "environment": os.getenv("ENV", "production")
+        "scraper": "available" if TV_SCRAPER_AVAILABLE else "mock"
     }
 
 @app.get("/charts/top100")
@@ -161,11 +152,50 @@ async def top_charts(limit: int = Query(100, ge=1, le=200)):
     
     return {
         "chart": "Uganda Top 100",
-        "week": datetime.utcnow().strftime("%Y-W%W"),
         "entries": songs,
         "count": len(songs),
         "timestamp": datetime.utcnow().isoformat()
     }
+
+@app.post("/scrape/tv")
+async def scrape_tv(
+    station: str = "ntv",
+    auth: bool = Depends(verify_admin)
+):
+    """Trigger TV scraping"""
+    try:
+        logger.info(f"Starting TV scrape for station: {station}")
+        
+        # Use scraper
+        items = await tv_scraper.scrape_station(station)
+        
+        # Convert to SongItems
+        song_items = [
+            SongItem(
+                title=item.get("title", ""),
+                artist=item.get("artist", ""),
+                plays=item.get("plays", 0),
+                score=item.get("score", 50.0),
+                station=station,
+                timestamp=item.get("timestamp")
+            ) for item in items
+        ]
+        
+        # Add to database
+        db.add_songs(song_items, f"tv_scrape_{station}")
+        
+        return {
+            "status": "success",
+            "message": f"Scraped {len(items)} songs from {station}",
+            "station": station,
+            "items": len(items),
+            "timestamp": datetime.utcnow().isoformat(),
+            "scraper_mode": "real" if TV_SCRAPER_AVAILABLE else "mock"
+        }
+        
+    except Exception as e:
+        logger.error(f"Scraping error: {e}")
+        raise HTTPException(status_code=500, detail=f"Scraping failed: {str(e)}")
 
 @app.post("/ingest/tv")
 async def ingest_tv(
@@ -180,68 +210,10 @@ async def ingest_tv(
             "status": "success",
             "message": f"Ingested {len(payload.items)} songs from {payload.source}",
             "source": payload.source,
-            "timestamp": datetime.utcnow().isoformat(),
-            "total_songs_in_db": len(db.songs)
+            "timestamp": datetime.utcnow().isoformat()
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ingestion error: {str(e)}")
-
-@app.post("/scrape/tv")
-async def scrape_tv(
-    station: str = "ntv",
-    auth: bool = Depends(verify_admin)
-):
-    """Mock TV scraping endpoint"""
-    try:
-        scraping_state["is_scraping"] = True
-        scraping_state["last_scrape_time"] = datetime.utcnow()
-        
-        # Use mock scraper
-        items = await tv_scraper.scrape_station(station)
-        
-        # Convert to SongItems
-        song_items = [
-            SongItem(
-                title=item.get("title", ""),
-                artist=item.get("artist", ""),
-                plays=item.get("plays", 0),
-                score=min(item.get("plays", 0) * 0.1 + 50, 100),
-                station=station
-            ) for item in items
-        ]
-        
-        db.add_songs(song_items, f"tv_scrape_{station}")
-        
-        scraping_state["scrape_results"] = {
-            station: {
-                "count": len(items),
-                "items": items[:5]
-            }
-        }
-        
-        return {
-            "status": "success",
-            "message": f"Mock scraped {len(items)} items from {station}",
-            "station": station,
-            "items_scraped": len(items),
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        scraping_state["errors"].append(str(e))
-        raise HTTPException(status_code=500, detail=f"Scraping error: {str(e)}")
-    finally:
-        scraping_state["is_scraping"] = False
-
-@app.get("/scrape/status")
-async def get_scrape_status(auth: bool = Depends(verify_admin)):
-    """Get scraping status"""
-    return {
-        "is_scraping": scraping_state["is_scraping"],
-        "last_scrape_time": scraping_state["last_scrape_time"].isoformat() if scraping_state["last_scrape_time"] else None,
-        "scrape_results": scraping_state["scrape_results"],
-        "errors": scraping_state["errors"]
-    }
 
 @app.get("/admin/status")
 async def admin_status(auth: bool = Depends(verify_admin)):
@@ -249,14 +221,10 @@ async def admin_status(auth: bool = Depends(verify_admin)):
         "status": "admin_authenticated",
         "timestamp": datetime.utcnow().isoformat(),
         "total_songs": len(db.songs),
-        "scraper_mode": "mock",
-        "scraping_state": {
-            "is_scraping": scraping_state["is_scraping"],
-            "last_scrape": scraping_state["last_scrape_time"].isoformat() if scraping_state["last_scrape_time"] else None
-        }
+        "scraper_available": TV_SCRAPER_AVAILABLE
     }
 
-# ====== ERROR HANDLERS ======
+# ====== ERROR HANDLER ======
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
     return JSONResponse(
@@ -264,8 +232,7 @@ async def http_exception_handler(request, exc):
         content={
             "error": exc.detail,
             "status_code": exc.status_code,
-            "timestamp": datetime.utcnow().isoformat(),
-            "path": str(request.url.path)
+            "timestamp": datetime.utcnow().isoformat()
         }
     )
 
