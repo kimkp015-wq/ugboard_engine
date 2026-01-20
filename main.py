@@ -1,5 +1,5 @@
 """
-UG Board Engine - Complete Production Version
+UG Board Engine - Complete Production Version (FIXED)
 """
 import os
 import sys
@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from slowapi.middleware import SlowAPIMiddleware
 
 # ====== CONFIGURE LOGGING ======
 logs_dir = Path("logs")
@@ -90,41 +91,34 @@ class Database:
     def get_top_songs(self, limit: int = 100):
         sorted_songs = sorted(self.songs, key=lambda x: x.get("score", 0), reverse=True)
         return sorted_songs[:limit]
+    
+    def get_songs_by_station(self, station: str, limit: int = 50):
+        station_songs = [s for s in self.songs if s.get("station") == station]
+        return sorted(station_songs, key=lambda x: x.get("score", 0), reverse=True)[:limit]
 
 db = Database()
 
-# ====== SCRAPER IMPORT ======
+# ====== SCRAPER IMPORT (FIXED) ======
 def initialize_scraper():
     """Initialize TV scraper with fallback"""
     global tv_scraper, TV_SCRAPER_AVAILABLE
     
     try:
-        # Try multiple import paths
-        possible_paths = [
-            "scripts.tv_scraper",
-            "src.tv_scraper",
-            "tv_scraper"
-        ]
+        # Add scripts directory to Python path
+        scripts_path = Path(__file__).parent / "scripts"
+        if scripts_path.exists():
+            sys.path.insert(0, str(scripts_path))
+            logger.info(f"Added to path: {scripts_path}")
         
-        scraper_module = None
-        for path in possible_paths:
-            try:
-                scraper_module = __import__(path, fromlist=["TVScraper"])
-                break
-            except ImportError:
-                continue
+        # Try to import
+        from tv_scraper import TVScraper
+        tv_scraper = TVScraper()
+        TV_SCRAPER_AVAILABLE = True
+        logger.info("✅ TV Scraper imported successfully")
+        return True
         
-        if scraper_module and hasattr(scraper_module, "TVScraper"):
-            tv_scraper = scraper_module.TVScraper()
-            TV_SCRAPER_AVAILABLE = True
-            logger.info("✅ TV Scraper imported successfully")
-            return True
-        else:
-            raise ImportError("TVScraper class not found")
-            
     except ImportError as e:
         logger.warning(f"⚠️ Could not import TVScraper: {e}")
-        logger.info("📺 Using mock scraper instead")
         
         # Mock scraper as fallback
         class MockScraper:
@@ -136,8 +130,7 @@ def initialize_scraper():
                         "artist": "Demo Artist",
                         "plays": 100,
                         "score": 85.0,
-                        "timestamp": datetime.utcnow().isoformat(),
-                        "station": station_name
+                        "timestamp": datetime.utcnow().isoformat()
                     }
                 ]
         
@@ -154,8 +147,11 @@ async def lifespan(app: FastAPI):
     initialize_scraper()
     
     # Initialize rate limiter
-    app.state.limiter = Limiter(key_func=get_remote_address)
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.state.limiter = Limiter(
+        key_func=get_remote_address,
+        default_limits=["100/minute"],
+        storage_uri="memory://"
+    )
     
     yield
     
@@ -174,15 +170,12 @@ app = FastAPI(
 )
 
 # ====== MIDDLEWARE ======
+app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://your-frontend.com",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000"
-    ],
+    allow_origins=["*"],  # Configure for production
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -302,7 +295,13 @@ async def root(request: Request):
         "timestamp": datetime.utcnow().isoformat(),
         "scraper_available": TV_SCRAPER_AVAILABLE,
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "endpoints": {
+            "charts": "/charts/top100",
+            "scrape": "/scrape/tv (POST)",
+            "ingest": "/ingest/tv (POST)",
+            "admin": "/admin/status"
+        }
     }
 
 @app.get("/health")
@@ -319,7 +318,8 @@ async def health():
         "uptime": f"{int(hours)}h {int(minutes)}m {int(seconds)}s",
         "database_songs": len(db.songs),
         "scraper": "available" if TV_SCRAPER_AVAILABLE else "mock",
-        "request_count": request_count
+        "request_count": request_count,
+        "environment": os.getenv("ENV", "production")
     }
 
 @app.get("/metrics")
@@ -338,51 +338,56 @@ async def metrics():
     }
 
 @app.get("/charts/top100")
+@app.state.limiter.limit("100/minute")
 async def top_charts(
     request: Request,
     limit: int = Query(100, ge=1, le=200),
     station: Optional[str] = None
 ):
     """Get top charts with rate limiting"""
-    songs = db.get_top_songs(limit)
-    
-    # Filter by station if specified
     if station:
-        songs = [s for s in songs if s.get("station") == station]
-        songs = songs[:limit]
+        songs = db.get_songs_by_station(station, limit)
+        chart_name = f"Uganda Top {len(songs)} - {station.upper()}"
+    else:
+        songs = db.get_top_songs(limit)
+        chart_name = f"Uganda Top {len(songs)}"
     
     # Add ranks
     for i, song in enumerate(songs, 1):
         song["rank"] = i
     
     return {
-        "chart": f"Uganda Top {len(songs)}" + (f" - {station}" if station else ""),
+        "chart": chart_name,
+        "week": datetime.utcnow().strftime("%Y-W%W"),
         "entries": songs,
         "count": len(songs),
         "timestamp": datetime.utcnow().isoformat()
     }
 
 @app.post("/scrape/tv")
+@app.state.limiter.limit("10/minute")
 async def scrape_tv(
-    request: ScrapeRequest,
+    request: Request,
+    scrape_request: ScrapeRequest,
     background_tasks: BackgroundTasks,
     auth: bool = Depends(verify_admin)
 ):
     """Trigger TV scraping"""
     
-    if request.async_mode:
+    if scrape_request.async_mode:
         # Run in background
-        background_tasks.add_task(scrape_background_task, request.stations)
+        background_tasks.add_task(scrape_background_task, scrape_request.stations)
         
         return {
             "status": "started",
-            "message": f"Scraping started for stations: {request.stations}",
+            "message": f"Scraping started for stations: {scrape_request.stations}",
             "async": True,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
+            "monitor": "/scrape/status"
         }
     else:
         # Run synchronously
-        result = await scrape_multiple_stations(request.stations)
+        result = await scrape_multiple_stations(scrape_request.stations)
         
         return {
             "status": "completed",
@@ -391,7 +396,8 @@ async def scrape_tv(
         }
 
 @app.get("/scrape/status")
-async def get_scrape_status(auth: bool = Depends(verify_admin)):
+@app.state.limiter.limit("30/minute")
+async def get_scrape_status(request: Request, auth: bool = Depends(verify_admin)):
     """Get current scraping status"""
     status = ScrapeStatus(
         is_scraping=scraping_state["is_scraping"],
@@ -403,7 +409,9 @@ async def get_scrape_status(auth: bool = Depends(verify_admin)):
     return status
 
 @app.post("/ingest/tv")
+@app.state.limiter.limit("50/minute")
 async def ingest_tv(
+    request: Request,
     payload: IngestPayload,
     auth: bool = Depends(verify_ingest)
 ):
@@ -422,7 +430,8 @@ async def ingest_tv(
         raise HTTPException(status_code=500, detail=f"Ingestion error: {str(e)}")
 
 @app.get("/admin/status")
-async def admin_status(auth: bool = Depends(verify_admin)):
+@app.state.limiter.limit("30/minute")
+async def admin_status(request: Request, auth: bool = Depends(verify_admin)):
     """Admin status endpoint"""
     return {
         "status": "admin_authenticated",
@@ -452,6 +461,7 @@ async def list_stations():
 # ====== ERROR HANDLERS ======
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
+    logger.error(f"HTTP Error {exc.status_code}: {exc.detail}")
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -464,11 +474,25 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    logger.warning(f"Rate limit exceeded for {request.client.host}")
     return JSONResponse(
         status_code=429,
         content={
             "error": "Rate limit exceeded",
             "message": "Too many requests. Please try again later.",
+            "retry_after": exc.retry_after,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal server error",
+            "detail": str(exc) if os.getenv("ENV") != "production" else "Contact support",
             "timestamp": datetime.utcnow().isoformat()
         }
     )
@@ -477,4 +501,14 @@ async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
+    
+    print(f"""
+    🎵 UG Board Engine v7.0.0
+    📺 TV Scraper: {'✅ Available' if TV_SCRAPER_AVAILABLE else '❌ Mock Mode'}
+    🌐 URL: http://localhost:{port}
+    📚 Docs: http://localhost:{port}/docs
+    🔧 Rate Limiting: Enabled
+    📈 Metrics: /metrics
+    """)
+    
     uvicorn.run(app, host="0.0.0.0", port=port)
