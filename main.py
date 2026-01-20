@@ -1,6 +1,6 @@
 """
-UG Board Engine - Production Ready Architecture v8.3.1
-World-Class Implementation with SOLID Principles and Clean Architecture
+UG Board Engine - Production Ready Architecture v8.4.0
+World-Class Implementation for Ugandan Music Charts
 """
 
 import os
@@ -12,123 +12,132 @@ import logging
 import hashlib
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any, Union, Tuple
+from typing import Optional, List, Dict, Any, Tuple
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from enum import Enum
 
-import redis
-import aiofiles
+# Optional imports with fallbacks
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    redis = None
+
+try:
+    import aiofiles
+    AIOFILES_AVAILABLE = True
+except ImportError:
+    AIOFILES_AVAILABLE = False
+    aiofiles = None
+
 from fastapi import (
-    FastAPI, HTTPException, Header, Depends, BackgroundTasks, 
-    Query, Path as FPath, Request, status, APIRouter, Response
+    FastAPI, HTTPException, Header, Depends, Query, 
+    Path as FPath, Request, status, Response
 )
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from pydantic import BaseModel, Field, field_validator, ConfigDict, SecretStr
-from pydantic_settings import BaseSettings
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 # ============================================================================
-# CONFIGURATION LAYER (12-Factor App Compliant)
+# CONFIGURATION
 # ============================================================================
 
 class Environment(str, Enum):
     DEVELOPMENT = "development"
-    STAGING = "staging"
     PRODUCTION = "production"
 
-class Settings(BaseSettings):
-    """Configuration management with validation"""
+class Config:
+    """Configuration management"""
     
-    # Required Environment Variables
-    ADMIN_TOKEN: SecretStr = Field(..., env="ADMIN_TOKEN")
-    INGEST_TOKEN: SecretStr = Field(..., env="INGEST_TOKEN")
-    INTERNAL_TOKEN: SecretStr = Field(..., env="INTERNAL_TOKEN")
-    YOUTUBE_TOKEN: SecretStr = Field(..., env="YOUTUBE_TOKEN")
+    # Required tokens (from environment)
+    ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "admin-ug-board-2025")
+    INGEST_TOKEN = os.getenv("INGEST_TOKEN", "ug-board-ingest-2025")
+    YOUTUBE_TOKEN = os.getenv("YOUTUBE_TOKEN", INGEST_TOKEN)
+    INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "ug-board-internal-2025")
     
-    # Optional with defaults
-    ENVIRONMENT: Environment = Field(Environment.PRODUCTION, env="ENVIRONMENT")
-    DATABASE_URL: Optional[str] = Field(None, env="DATABASE_URL")
-    REDIS_URL: Optional[str] = Field(None, env="REDIS_URL")
-    CACHE_TTL: int = Field(300, env="CACHE_TTL")  # 5 minutes
-    MAX_DB_SIZE: int = Field(10000, env="MAX_DB_SIZE")
-    TRENDING_WINDOW_HOURS: int = Field(8, env="TRENDING_WINDOW_HOURS")
-    
-    # Performance
-    MAX_WORKERS: int = Field(4, env="MAX_WORKERS")
-    REQUEST_TIMEOUT: int = Field(30, env="REQUEST_TIMEOUT")
-    
-    # Security
-    CORS_ORIGINS: List[str] = Field(
-        default=["*"],  # Changed to wildcard for Render deployment
-        env="CORS_ORIGINS"
-    )
-    RATE_LIMIT_REQUESTS: int = Field(100, env="RATE_LIMIT_REQUESTS")
-    RATE_LIMIT_WINDOW: int = Field(60, env="RATE_LIMIT_WINDOW")  # seconds
+    # Environment
+    ENVIRONMENT = Environment(os.getenv("ENV", "production"))
     
     # Paths
-    DATA_DIR: Path = Field(Path("data"), env="DATA_DIR")
-    LOGS_DIR: Path = Field(Path("logs"), env="LOGS_DIR")
+    DATA_DIR = Path("data")
+    LOGS_DIR = Path("logs")
     
-    model_config = {
-        "env_file": ".env",
-        "env_file_encoding": "utf-8",
-        "case_sensitive": False,
-        "extra": "ignore"
+    # Database settings
+    MAX_DB_SIZE = int(os.getenv("MAX_DB_SIZE", "10000"))
+    TRENDING_WINDOW_HOURS = int(os.getenv("TRENDING_WINDOW_HOURS", "8"))
+    CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))  # 5 minutes
+    
+    # Redis (optional)
+    REDIS_URL = os.getenv("REDIS_URL")
+    
+    # Performance
+    REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "30"))
+    
+    # Ugandan Regions
+    UGANDAN_REGIONS = {
+        "central": {
+            "name": "Central Region",
+            "districts": ["Kampala", "Wakiso", "Mukono", "Luwero", "Masaka"],
+            "musicians": ["Alien Skin", "Azawi", "Sheebah Karungi", "Vinka", 
+                         "Eddy Kenzo", "Bobi Wine", "Daddy Andre"]
+        },
+        "western": {
+            "name": "Western Region",
+            "districts": ["Mbarara", "Kasese", "Ntungamo", "Kabale", 
+                         "Fort Portal", "Hoima"],
+            "musicians": ["Ray G", "T-Paul", "Truth 256", "Sister Charity", 
+                         "Omega 256", "Rema Namakula"]
+        },
+        "eastern": {
+            "name": "Eastern Region",
+            "districts": ["Jinja", "Mbale", "Tororo", "Mayuge", "Soroti", "Iganga"],
+            "musicians": ["Victor Ruz", "Davido Spider", "Temperature Touch", 
+                         "Idi Amasaba", "Rexy", "Geosteady"]
+        },
+        "northern": {
+            "name": "Northern Region",
+            "districts": ["Gulu", "Lira", "Arua", "Kitgum"],
+            "musicians": ["Bosmic Otim", "Odongo Romeo", "Eezzy", 
+                         "Jenneth Prischa", "Laxzy Mover", "Fik Fameica"]
+        }
     }
     
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.validate_configuration()
+    VALID_REGIONS = set(UGANDAN_REGIONS.keys())
     
-    def validate_configuration(self):
-        """Validate configuration at runtime"""
-        # Create directories
-        self.DATA_DIR.mkdir(exist_ok=True, parents=True)
-        self.LOGS_DIR.mkdir(exist_ok=True, parents=True)
+    @classmethod
+    def validate(cls):
+        """Validate configuration"""
+        cls.DATA_DIR.mkdir(exist_ok=True, parents=True)
+        cls.LOGS_DIR.mkdir(exist_ok=True, parents=True)
+        return cls
 
-settings = Settings()
+config = Config.validate()
 
 # ============================================================================
-# LOGGING & MONITORING
+# LOGGING
 # ============================================================================
 
-def setup_structured_logging():
-    """Configure structured logging for production"""
-    logs_dir = settings.LOGS_DIR
+def setup_logging():
+    """Configure logging"""
+    logs_dir = config.LOGS_DIR
     
-    # Clear any existing handlers
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
-    
-    # Formatter
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
-    # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    
-    # File handler
-    file_handler = logging.FileHandler(logs_dir / "ugboard_engine.log")
-    file_handler.setFormatter(formatter)
-    
-    # Setup root logger
     logging.basicConfig(
         level=logging.INFO,
-        handlers=[console_handler, file_handler]
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(logs_dir / "ugboard_engine.log")
+        ]
     )
-    
     return logging.getLogger(__name__)
 
-logger = setup_structured_logging()
+logger = setup_logging()
 
 # ============================================================================
-# EXCEPTIONS (Clean Error Hierarchy)
+# EXCEPTIONS
 # ============================================================================
 
 class UGBaseException(Exception):
@@ -139,80 +148,35 @@ class UGBaseException(Exception):
         super().__init__(self.message)
 
 class ValidationError(UGBaseException):
-    """Validation-related errors"""
+    """Validation errors"""
     def __init__(self, message: str):
         super().__init__(message, "VALIDATION_ERROR")
 
 class AuthenticationError(UGBaseException):
-    """Authentication-related errors"""
+    """Authentication errors"""
     def __init__(self, message: str):
         super().__init__(message, "AUTHENTICATION_ERROR")
 
 class DatabaseError(UGBaseException):
-    """Database-related errors"""
+    """Database errors"""
     def __init__(self, message: str):
         super().__init__(message, "DATABASE_ERROR")
 
-class RateLimitError(UGBaseException):
-    """Rate limiting errors"""
-    def __init__(self, message: str):
-        super().__init__(message, "RATE_LIMIT_ERROR")
-
 # ============================================================================
-# MODELS (Domain Entities)
+# MODELS
 # ============================================================================
-
-class Region(str, Enum):
-    CENTRAL = "central"
-    WESTERN = "western"
-    EASTERN = "eastern"
-    NORTHERN = "northern"
-
-class District(str, Enum):
-    # Central
-    KAMPALA = "Kampala"
-    WAKISO = "Wakiso"
-    MUKONO = "Mukono"
-    LUWERO = "Luwero"
-    MASAKA = "Masaka"
-    
-    # Western
-    MBARARA = "Mbarara"
-    KASESE = "Kasese"
-    NTUNGAMO = "Ntungamo"
-    KABALE = "Kabale"
-    FORT_PORTAL = "Fort Portal"
-    HOIMA = "Hoima"
-    
-    # Eastern
-    JINJA = "Jinja"
-    MBALE = "Mbale"
-    TORORO = "Tororo"
-    MAYUGE = "Mayuge"
-    SOROTI = "Soroti"
-    IGANGA = "Iganga"
-    
-    # Northern
-    GULU = "Gulu"
-    LIRA = "Lira"
-    ARUA = "Arua"
-    KITGUM = "Kitgum"
 
 class SongItem(BaseModel):
-    """Domain model for songs with comprehensive validation"""
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        use_enum_values=True,
-        extra="forbid"
-    )
+    """Song data model"""
+    model_config = ConfigDict(str_strip_whitespace=True)
     
     title: str = Field(..., min_length=1, max_length=200)
     artist: str = Field(..., min_length=1, max_length=100)
     plays: int = Field(default=0, ge=0)
     score: float = Field(default=0.0, ge=0.0, le=100.0)
     station: Optional[str] = Field(None, max_length=50)
-    region: Region = Field(default=Region.CENTRAL)
-    district: Optional[District] = None
+    region: str = Field("central", pattern="^(central|western|eastern|northern)$")
+    district: Optional[str] = Field(None, max_length=50)
     timestamp: Optional[str] = Field(None)
     
     @field_validator('timestamp')
@@ -221,59 +185,89 @@ class SongItem(BaseModel):
         """Validate ISO 8601 timestamp"""
         if v:
             try:
-                # Normalize timestamp
                 if v.endswith('Z'):
                     v = v[:-1] + '+00:00'
                 datetime.fromisoformat(v)
             except (ValueError, AttributeError):
-                raise ValidationError(f"Invalid ISO 8601 timestamp: {v}")
+                raise ValueError('Invalid ISO 8601 timestamp format')
         return v
 
 class IngestPayload(BaseModel):
-    """Base ingestion payload with rate limiting support"""
+    """Ingestion payload"""
     items: List[SongItem] = Field(..., min_items=1, max_items=1000)
     source: str = Field(..., min_length=1, max_length=100)
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    request_id: Optional[str] = Field(None)  # For request tracing
 
 class YouTubeIngestPayload(IngestPayload):
-    """YouTube-specific ingestion"""
+    """YouTube ingestion payload"""
     channel_id: Optional[str] = Field(None, max_length=50)
     video_id: Optional[str] = Field(None, max_length=20)
     category: str = Field(default="music", max_length=50)
 
 # ============================================================================
-# DATABASE ABSTRACTION LAYER
+# TRENDING SERVICE
 # ============================================================================
 
-class BaseDatabase:
-    """Abstract base class for database implementations"""
+class TrendingService:
+    """Trending songs service with 8-hour window rotation"""
     
-    async def add_songs(self, songs: List[SongItem], source: str) -> int:
-        """Add songs to database"""
-        raise NotImplementedError
+    @staticmethod
+    def get_current_trending_window() -> Dict[str, Any]:
+        """Get current trending window information"""
+        current_time = time.time()
+        hours_since_epoch = int(current_time // 3600)
+        
+        window_number = hours_since_epoch // config.TRENDING_WINDOW_HOURS
+        window_start_hour = (window_number * config.TRENDING_WINDOW_HOURS) % 24
+        window_end_hour = (window_start_hour + config.TRENDING_WINDOW_HOURS) % 24
+        
+        next_window_start = (window_number + 1) * config.TRENDING_WINDOW_HOURS * 3600
+        seconds_remaining = next_window_start - current_time
+        
+        return {
+            "window_number": window_number,
+            "window_start_hour": window_start_hour,
+            "window_end_hour": window_end_hour,
+            "seconds_remaining": int(seconds_remaining),
+            "current_hour": datetime.utcnow().hour,
+            "description": f"{config.TRENDING_WINDOW_HOURS}-hour window {window_start_hour:02d}:00 - {window_end_hour:02d}:00 UTC"
+        }
     
-    async def get_top_songs(self, limit: int = 100, region: Optional[Region] = None) -> List[Dict[str, Any]]:
-        """Get top songs"""
-        raise NotImplementedError
-    
-    async def get_trending_songs(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get trending songs"""
-        raise NotImplementedError
-    
-    async def get_region_stats(self) -> Dict[str, Dict[str, Any]]:
-        """Get region statistics"""
-        raise NotImplementedError
-    
-    async def publish_weekly_chart(self, week: str) -> Dict[str, Any]:
-        """Publish weekly chart"""
-        raise NotImplementedError
+    @staticmethod
+    def get_trending_songs(youtube_songs: List[Dict[str, Any]], limit: int = 10) -> List[Dict[str, Any]]:
+        """Get trending songs based on YouTube ingestion"""
+        if not youtube_songs:
+            return []
+        
+        # Get current window
+        window_info = TrendingService.get_current_trending_window()
+        window_number = window_info["window_number"]
+        
+        # Filter recent songs (last 3 days)
+        recent_cutoff = datetime.utcnow() - timedelta(days=3)
+        recent_songs = [
+            song for song in youtube_songs
+            if datetime.fromisoformat(song.get("ingested_at", "2000-01-01").replace('Z', '+00:00')) > recent_cutoff
+        ]
+        
+        if not recent_songs:
+            return []
+        
+        # Deterministic ordering based on window number
+        def trending_score(song: Dict[str, Any]) -> float:
+            base_score = song.get("score", 0) * 0.6 + song.get("plays", 0) * 0.4
+            window_hash = hash(f"{window_number}_{song.get('id', '')}") % 1000
+            return base_score + (window_hash / 1000.0)
+        
+        sorted_songs = sorted(recent_songs, key=trending_score, reverse=True)
+        return sorted_songs[:limit]
 
-class HybridDatabase(BaseDatabase):
-    """
-    Hybrid database with Redis caching and async file persistence
-    Implements Repository pattern
-    """
+# ============================================================================
+# DATABASE LAYER
+# ============================================================================
+
+class JSONDatabase:
+    """File-based JSON database with Ugandan regions support"""
     
     def __init__(self, data_dir: Path, redis_url: Optional[str] = None):
         self.data_dir = data_dir
@@ -281,155 +275,122 @@ class HybridDatabase(BaseDatabase):
         self._redis_url = redis_url
         
         # Initialize data structures
-        self._songs: List[Dict[str, Any]] = []
-        self._chart_history: List[Dict[str, Any]] = []
-        self._regions: Dict[str, Dict[str, Any]] = self._initialize_regions()
+        self.songs: List[Dict[str, Any]] = []
+        self.chart_history: List[Dict[str, Any]] = []
+        self.regions: Dict[str, Dict[str, Any]] = {}
+        self.youtube_songs: List[Dict[str, Any]] = []
         
-        # Initialize connections
-        asyncio.create_task(self._initialize())
-    
-    def _initialize_regions(self) -> Dict[str, Dict[str, Any]]:
-        """Initialize Ugandan region structure"""
-        return {
-            Region.CENTRAL: {
-                "name": "Central Region",
-                "districts": [District.KAMPALA, District.WAKISO, District.MUKONO, 
-                            District.LUWERO, District.MASAKA],
-                "musicians": ["Alien Skin", "Azawi", "Sheebah Karungi", "Vinka", 
-                            "Eddy Kenzo", "Bobi Wine", "Daddy Andre"],
-                "songs": []
-            },
-            Region.WESTERN: {
-                "name": "Western Region",
-                "districts": [District.MBARARA, District.KASESE, District.NTUNGAMO, 
-                            District.KABALE, District.FORT_PORTAL, District.HOIMA],
-                "musicians": ["Ray G", "T-Paul", "Truth 256", "Sister Charity", 
-                            "Omega 256", "Rema Namakula"],
-                "songs": []
-            },
-            Region.EASTERN: {
-                "name": "Eastern Region",
-                "districts": [District.JINJA, District.MBALE, District.TORORO, 
-                            District.MAYUGE, District.SOROTI, District.IGANGA],
-                "musicians": ["Victor Ruz", "Davido Spider", "Temperature Touch", 
-                            "Idi Amasaba", "Rexy", "Geosteady"],
-                "songs": []
-            },
-            Region.NORTHERN: {
-                "name": "Northern Region",
-                "districts": [District.GULU, District.LIRA, District.ARUA, District.KITGUM],
-                "musicians": ["Bosmic Otim", "Odongo Romeo", "Eezzy", 
-                            "Jenneth Prischa", "Laxzy Mover", "Fik Fameica"],
+        # Initialize regions from config
+        for region_code, region_data in config.UGANDAN_REGIONS.items():
+            self.regions[region_code] = {
+                "name": region_data["name"],
+                "districts": region_data["districts"],
+                "musicians": region_data["musicians"],
                 "songs": []
             }
-        }
+        
+        # Initialize Redis if available
+        self._init_redis()
+        
+        # Load existing data
+        self._load_data()
     
-    async def _initialize(self):
-        """Initialize database connections"""
-        # Initialize Redis if URL provided
-        if self._redis_url:
+    def _init_redis(self):
+        """Initialize Redis connection if available"""
+        if self._redis_url and REDIS_AVAILABLE:
             try:
                 self._redis = redis.from_url(
                     self._redis_url,
                     socket_connect_timeout=5,
                     socket_timeout=5,
-                    retry_on_timeout=True,
                     decode_responses=True
                 )
                 self._redis.ping()
                 logger.info("Redis cache initialized")
-            except redis.ConnectionError as e:
-                logger.warning(f"Redis connection failed: {e}. Continuing without cache.")
+            except Exception as e:
+                logger.warning(f"Redis connection failed: {e}")
                 self._redis = None
-        
-        # Load data from files
-        await self._load_data()
     
-    async def _load_data(self):
-        """Load data asynchronously"""
+    def _load_data(self):
+        """Load data from JSON files"""
         try:
-            await asyncio.gather(
-                self._load_file("songs.json", self._songs),
-                self._load_file("chart_history.json", self._chart_history),
-                self._load_regions()
-            )
-            logger.info(f"Loaded {len(self._songs)} songs")
+            # Load songs
+            songs_file = self.data_dir / "songs.json"
+            if songs_file.exists():
+                with open(songs_file, 'r') as f:
+                    self.songs = json.load(f)
+                    self.youtube_songs = [
+                        song for song in self.songs 
+                        if song.get("source", "").startswith("youtube_")
+                    ]
+                logger.info(f"Loaded {len(self.songs)} songs")
+            
+            # Load chart history
+            history_file = self.data_dir / "chart_history.json"
+            if history_file.exists():
+                with open(history_file, 'r') as f:
+                    self.chart_history = json.load(f)
+            
+            # Load regions
+            regions_file = self.data_dir / "regions.json"
+            if regions_file.exists():
+                with open(regions_file, 'r') as f:
+                    loaded_regions = json.load(f)
+                    for region_code, data in loaded_regions.items():
+                        if region_code in self.regions:
+                            self.regions[region_code].update(data)
+            
+            # Rebuild region songs
+            self._rebuild_region_songs()
+            
         except Exception as e:
             logger.error(f"Failed to load data: {e}")
-            raise DatabaseError(f"Failed to load database: {str(e)}")
     
-    async def _load_file(self, filename: str, target_list: List):
-        """Load JSON file asynchronously"""
-        file_path = self.data_dir / filename
-        if await self._file_exists(file_path):
-            async with aiofiles.open(file_path, 'r') as f:
-                content = await f.read()
-                if content:
-                    target_list.extend(json.loads(content))
+    def _rebuild_region_songs(self):
+        """Rebuild region songs from main songs list"""
+        for region_data in self.regions.values():
+            region_data["songs"] = []
+        
+        for song in self.songs:
+            region = song.get("region")
+            if region in self.regions:
+                self.regions[region]["songs"].append(song)
     
-    async def _file_exists(self, path: Path) -> bool:
-        """Check if file exists asynchronously"""
+    def _save_data(self):
+        """Save data to JSON files"""
         try:
-            return await asyncio.to_thread(path.exists)
-        except Exception:
-            return False
-    
-    async def _load_regions(self):
-        """Load regions data"""
-        regions_file = self.data_dir / "regions.json"
-        if await self._file_exists(regions_file):
-            async with aiofiles.open(regions_file, 'r') as f:
-                loaded_regions = json.loads(await f.read())
-                for region_code, data in loaded_regions.items():
-                    if region_code in self._regions:
-                        self._regions[region_code].update(data)
-    
-    async def _save_data(self):
-        """Save data asynchronously with atomic writes"""
-        try:
-            # Use temporary files for atomic writes
-            tasks = [
-                self._save_file_atomic("songs.json", self._songs),
-                self._save_file_atomic("chart_history.json", self._chart_history),
-                self._save_regions_atomic()
-            ]
-            await asyncio.gather(*tasks)
+            # Save songs
+            with open(self.data_dir / "songs.json", 'w') as f:
+                json.dump(self.songs, f, indent=2, default=str)
+            
+            # Save chart history
+            with open(self.data_dir / "chart_history.json", 'w') as f:
+                json.dump(self.chart_history, f, indent=2, default=str)
+            
+            # Save regions (without songs to reduce size)
+            regions_to_save = {
+                region_code: {
+                    "name": data["name"],
+                    "districts": data["districts"],
+                    "musicians": data["musicians"]
+                }
+                for region_code, data in self.regions.items()
+            }
+            with open(self.data_dir / "regions.json", 'w') as f:
+                json.dump(regions_to_save, f, indent=2, default=str)
+            
+            logger.debug("Data saved to disk")
+            
         except Exception as e:
             logger.error(f"Failed to save data: {e}")
-            raise DatabaseError(f"Failed to save database: {str(e)}")
-    
-    async def _save_file_atomic(self, filename: str, data: List):
-        """Save file atomically to prevent corruption"""
-        temp_file = self.data_dir / f"{filename}.tmp"
-        final_file = self.data_dir / filename
-        
-        # Write to temp file
-        async with aiofiles.open(temp_file, 'w') as f:
-            await f.write(json.dumps(data, indent=2, default=str))
-        
-        # Atomic rename (works on POSIX systems)
-        await asyncio.to_thread(temp_file.replace, final_file)
-    
-    async def _save_regions_atomic(self):
-        """Save regions data without songs to reduce file size"""
-        regions_to_save = {
-            region_code: {
-                "name": data["name"],
-                "districts": data["districts"],
-                "musicians": data["musicians"]
-            }
-            for region_code, data in self._regions.items()
-        }
-        
-        await self._save_file_atomic("regions.json", regions_to_save)
     
     def _generate_song_id(self, song: SongItem) -> str:
         """Generate deterministic ID for song"""
         content = f"{song.title}_{song.artist}_{song.region}"
         return hashlib.md5(content.encode()).hexdigest()[:12]
     
-    async def add_songs(self, songs: List[SongItem], source: str) -> int:
-        """Add songs with deduplication"""
+    def add_songs(self, songs: List[SongItem], source: str) -> int:
+        """Add songs to database"""
         added_count = 0
         now = datetime.utcnow()
         
@@ -439,67 +400,73 @@ class HybridDatabase(BaseDatabase):
             song_dict["source"] = source
             song_dict["ingested_at"] = now.isoformat()
             
-            # Check for duplicates (last 48 hours)
+            # Deduplication check
             is_duplicate = any(
                 s.get("id") == song_dict["id"] and
                 datetime.fromisoformat(s.get("ingested_at", "2000-01-01").replace('Z', '+00:00')) >
                 now - timedelta(hours=48)
-                for s in self._songs[-500:]
+                for s in self.songs[-500:]
             )
             
             if not is_duplicate:
-                self._songs.append(song_dict)
+                self.songs.append(song_dict)
                 
                 # Add to region
-                region_songs = self._regions[song.region]["songs"]
-                region_songs.append(song_dict)
+                if song.region in self.regions:
+                    self.regions[song.region]["songs"].append(song_dict)
                 
-                # Invalidate cache for this region
+                # Track YouTube songs
+                if source.startswith("youtube_"):
+                    self.youtube_songs.append(song_dict)
+                
+                # Invalidate cache
                 if self._redis:
-                    await asyncio.to_thread(
-                        self._redis.delete,
-                        f"top_songs:{song.region}",
-                        f"trending_songs",
-                        f"region_stats"
-                    )
+                    self._invalidate_cache(song.region)
                 
                 added_count += 1
         
         # Enforce size limit
-        if len(self._songs) > settings.MAX_DB_SIZE:
-            self._songs = self._songs[-settings.MAX_DB_SIZE:]
-            # Rebuild region songs from remaining songs
-            for region_data in self._regions.values():
-                region_data["songs"] = [
-                    s for s in self._songs 
-                    if s.get("region") == region_data["name"].replace(" Region", "").lower()
-                ]
+        if len(self.songs) > config.MAX_DB_SIZE:
+            self.songs = self.songs[-config.MAX_DB_SIZE:]
+            self._rebuild_region_songs()
+            self.youtube_songs = [s for s in self.songs if s.get("source", "").startswith("youtube_")]
+            logger.info(f"Trimmed database to {config.MAX_DB_SIZE} songs")
         
-        # Save data asynchronously
+        # Save to disk
         if added_count > 0:
-            asyncio.create_task(self._save_data())
+            self._save_data()
         
         return added_count
     
-    async def get_top_songs(self, limit: int = 100, region: Optional[Region] = None) -> List[Dict[str, Any]]:
-        """Get top songs with caching"""
-        cache_key = f"top_songs:{region or 'all'}:{limit}"
-        
-        # Try cache first
+    def _invalidate_cache(self, region: str):
+        """Invalidate Redis cache"""
         if self._redis:
             try:
-                cached = await asyncio.to_thread(self._redis.get, cache_key)
+                keys_to_delete = [
+                    f"top_songs:{region}",
+                    f"top_songs:all",
+                    f"trending_songs",
+                    f"region_stats"
+                ]
+                self._redis.delete(*keys_to_delete)
+            except Exception:
+                pass
+    
+    def get_top_songs(self, limit: int = 100, region: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get top songs"""
+        cache_key = f"top_songs:{region or 'all'}:{limit}"
+        
+        # Try cache
+        if self._redis:
+            try:
+                cached = self._redis.get(cache_key)
                 if cached:
                     return json.loads(cached)
-            except redis.RedisError:
+            except Exception:
                 pass
         
         # Get data
-        source_list = (
-            self._regions[region]["songs"] 
-            if region and region in self._regions 
-            else self._songs
-        )
+        source_list = self.regions[region]["songs"] if region and region in self.regions else self.songs
         
         sorted_songs = sorted(
             source_list,
@@ -510,102 +477,63 @@ class HybridDatabase(BaseDatabase):
         # Cache result
         if self._redis and sorted_songs:
             try:
-                await asyncio.to_thread(
-                    self._redis.setex,
-                    cache_key,
-                    settings.CACHE_TTL,
-                    json.dumps(sorted_songs)
-                )
-            except redis.RedisError:
+                self._redis.setex(cache_key, config.CACHE_TTL, json.dumps(sorted_songs))
+            except Exception:
                 pass
         
         return sorted_songs
     
-    async def get_trending_songs(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get trending songs with 8-hour window algorithm"""
+    def get_trending_songs(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get trending songs"""
         cache_key = f"trending_songs:{limit}"
         
-        # Try cache first
         if self._redis:
             try:
-                cached = await asyncio.to_thread(self._redis.get, cache_key)
+                cached = self._redis.get(cache_key)
                 if cached:
                     return json.loads(cached)
-            except redis.RedisError:
+            except Exception:
                 pass
         
-        if not self._songs:
-            return []
+        trending_songs = TrendingService.get_trending_songs(self.youtube_songs, limit)
         
-        # 8-hour window algorithm
-        hours_since_epoch = int(time.time() // 3600)
-        window_number = hours_since_epoch // settings.TRENDING_WINDOW_HOURS
-        
-        # Get recent songs (last 7 days)
-        recent_cutoff = datetime.utcnow() - timedelta(days=7)
-        recent_songs = [
-            song for song in self._songs
-            if datetime.fromisoformat(song.get("ingested_at", "2000-01-01").replace('Z', '+00:00')) > recent_cutoff
-        ]
-        
-        if not recent_songs:
-            return []
-        
-        # Deterministic shuffle based on window number
-        def song_score(song: Dict[str, Any]) -> float:
-            base_score = song.get("score", 0) * 0.6 + song.get("plays", 0) * 0.4
-            # Add window-specific component for deterministic ordering
-            window_hash = hash(f"{window_number}_{song.get('id', '')}") % 1000
-            return base_score + (window_hash / 1000.0)
-        
-        sorted_songs = sorted(recent_songs, key=song_score, reverse=True)[:limit]
-        
-        # Cache result
-        if self._redis and sorted_songs:
+        if self._redis and trending_songs:
             try:
-                await asyncio.to_thread(
-                    self._redis.setex,
-                    cache_key,
-                    1800,  # 30 minutes cache for trending
-                    json.dumps(sorted_songs)
-                )
-            except redis.RedisError:
+                self._redis.setex(cache_key, 1800, json.dumps(trending_songs))  # 30 minutes
+            except Exception:
                 pass
         
-        return sorted_songs
+        return trending_songs
     
-    async def get_region_stats(self) -> Dict[str, Dict[str, Any]]:
-        """Get comprehensive region statistics"""
+    def get_region_stats(self) -> Dict[str, Dict[str, Any]]:
+        """Get region statistics"""
         cache_key = "region_stats"
         
         if self._redis:
             try:
-                cached = await asyncio.to_thread(self._redis.get, cache_key)
+                cached = self._redis.get(cache_key)
                 if cached:
                     return json.loads(cached)
-            except redis.RedisError:
+            except Exception:
                 pass
         
         stats = {}
         
-        for region_code, region_data in self._regions.items():
+        for region_code, region_data in self.regions.items():
             region_songs = region_data["songs"]
             
             if region_songs:
-                # Calculate statistics
                 total_plays = sum(s.get("plays", 0) for s in region_songs)
                 avg_score = sum(s.get("score", 0) for s in region_songs) / len(region_songs)
                 
-                # Top song
                 top_song = max(region_songs, key=lambda x: x.get("score", 0))
                 
-                # Artist distribution
                 artist_counts = {}
                 for song in region_songs:
                     artist = song.get("artist", "Unknown")
                     artist_counts[artist] = artist_counts.get(artist, 0) + 1
                 
-                top_artists = sorted(artist_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+                top_artists = sorted(artist_counts.items(), key=lambda x: x[1], reverse=True)[:3]
                 
                 stats[region_code] = {
                     "name": region_data["name"],
@@ -639,52 +567,48 @@ class HybridDatabase(BaseDatabase):
                     "last_updated": datetime.utcnow().isoformat()
                 }
         
-        # Cache result
         if self._redis:
             try:
-                await asyncio.to_thread(
-                    self._redis.setex,
-                    cache_key,
-                    settings.CACHE_TTL,
-                    json.dumps(stats)
-                )
-            except redis.RedisError:
+                self._redis.setex(cache_key, config.CACHE_TTL, json.dumps(stats))
+            except Exception:
                 pass
         
         return stats
     
-    async def publish_weekly_chart(self, week: str) -> Dict[str, Any]:
-        """Publish weekly chart with comprehensive data"""
+    def publish_weekly_chart(self, week: str) -> Dict[str, Any]:
+        """Publish weekly chart"""
         try:
             snapshot = {
                 "week": week,
                 "published_at": datetime.utcnow().isoformat(),
-                "top100": await self.get_top_songs(100),
+                "top100": self.get_top_songs(100),
                 "regions": {
-                    region_code: await self.get_top_songs(10, region_code)
-                    for region_code in self._regions.keys()
+                    region_code: self.get_top_songs(5, region_code)
+                    for region_code in self.regions.keys()
                 },
-                "region_stats": await self.get_region_stats(),
-                "trending": await self.get_trending_songs(10),
+                "region_stats": self.get_region_stats(),
+                "trending": self.get_trending_songs(10),
                 "summary": {
-                    "total_songs": len(self._songs),
-                    "total_plays": sum(s.get("plays", 0) for s in self._songs),
-                    "average_score": sum(s.get("score", 0) for s in self._songs) / max(1, len(self._songs))
+                    "total_songs": len(self.songs),
+                    "total_plays": sum(s.get("plays", 0) for s in self.songs),
+                    "average_score": sum(s.get("score", 0) for s in self.songs) / max(1, len(self.songs))
                 }
             }
             
-            self._chart_history.append(snapshot)
+            self.chart_history.append(snapshot)
             
-            # Keep only last 52 weeks
-            if len(self._chart_history) > 52:
-                self._chart_history = self._chart_history[-52:]
+            # Keep last 52 weeks
+            if len(self.chart_history) > 52:
+                self.chart_history = self.chart_history[-52:]
             
-            # Save asynchronously
-            asyncio.create_task(self._save_data())
+            self._save_data()
             
             # Invalidate all caches
             if self._redis:
-                await asyncio.to_thread(self._redis.flushdb)
+                try:
+                    self._redis.flushdb()
+                except Exception:
+                    pass
             
             return snapshot
             
@@ -692,96 +616,60 @@ class HybridDatabase(BaseDatabase):
             logger.error(f"Failed to publish weekly chart: {e}")
             raise DatabaseError(f"Failed to publish weekly chart: {str(e)}")
 
+# Initialize database
+db = JSONDatabase(config.DATA_DIR, config.REDIS_URL)
+
 # ============================================================================
-# SERVICES LAYER (Business Logic)
+# AUTHENTICATION
 # ============================================================================
 
-class AuthenticationService:
-    """Authentication service with token validation"""
+security = HTTPBearer(auto_error=False)
+
+class AuthService:
+    """Authentication service"""
     
     @staticmethod
     async def verify_admin(
-        credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))
+        credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
     ) -> bool:
         """Verify admin token"""
-        if not credentials:
-            raise AuthenticationError("Missing authentication token")
-        
-        try:
-            expected_token = settings.ADMIN_TOKEN.get_secret_value()
-            if credentials.credentials != expected_token:
-                raise AuthenticationError("Invalid admin token")
-            
-            logger.debug("Admin authentication successful")
-            return True
-            
-        except Exception as e:
-            logger.warning(f"Admin authentication failed: {e}")
-            raise AuthenticationError("Authentication failed")
+        if not credentials or credentials.credentials != config.ADMIN_TOKEN:
+            raise AuthenticationError("Invalid or missing admin token")
+        return True
     
     @staticmethod
     async def verify_ingest(
-        credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))
+        credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
     ) -> bool:
         """Verify ingestion token"""
-        if not credentials:
-            raise AuthenticationError("Missing ingestion token")
-        
-        try:
-            expected_token = settings.INGEST_TOKEN.get_secret_value()
-            if credentials.credentials != expected_token:
-                raise AuthenticationError("Invalid ingestion token")
-            
-            logger.debug("Ingest authentication successful")
-            return True
-            
-        except Exception as e:
-            logger.warning(f"Ingest authentication failed: {e}")
-            raise AuthenticationError("Ingestion authentication failed")
+        if not credentials or credentials.credentials != config.INGEST_TOKEN:
+            raise AuthenticationError("Invalid or missing ingestion token")
+        return True
     
     @staticmethod
     async def verify_youtube(
-        credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))
+        credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
     ) -> bool:
         """Verify YouTube ingestion token"""
-        if not credentials:
-            raise AuthenticationError("Missing YouTube token")
-        
-        try:
-            expected_token = settings.YOUTUBE_TOKEN.get_secret_value()
-            if credentials.credentials != expected_token:
-                raise AuthenticationError("Invalid YouTube token")
-            
-            logger.debug("YouTube authentication successful")
-            return True
-            
-        except Exception as e:
-            logger.warning(f"YouTube authentication failed: {e}")
-            raise AuthenticationError("YouTube authentication failed")
+        if not credentials or credentials.credentials != config.YOUTUBE_TOKEN:
+            raise AuthenticationError("Invalid or missing YouTube token")
+        return True
+
+# ============================================================================
+# VALIDATION SERVICE
+# ============================================================================
 
 class ValidationService:
-    """Business logic validation for Ugandan content"""
+    """Ugandan content validation"""
     
-    # Comprehensive Ugandan artist database
     UGANDAN_ARTISTS = {
-        # Central Region
         "bobi wine", "eddy kenzo", "sheebah", "daddy andre", "gravity",
         "vyroota", "geosteady", "feffe busi", "jose chameleone", "bebe cool",
         "alien skin", "azawi", "vinka", "cindy", "fille", "lyrical", "navio",
-        
-        # Western Region
         "ray g", "t-paul", "truth 256", "sister charity", "omega 256",
-        "rema namakula", "irinah", "mickie wine",
-        
-        # Eastern Region
-        "victor ruz", "davido spider", "temperature touch", "idi amasaba",
-        "rexy", "kadongo kamu",
-        
-        # Northern Region
-        "bosmic otim", "odongo romeo", "eezzy", "jenneth prischa",
-        "laxzy mover", "fik fameica",
-        
-        # Cross-region
+        "rema namakula", "irinah", "mickie wine", "victor ruz", "davido spider",
+        "temperature touch", "idi amasaba", "rexy", "kadongo kamu", "bosmic otim",
+        "odongo romeo", "eezzy", "jenneth prischa", "laxzy mover", "fik fameica",
         "john blaq", "pia pounds", "catherine kusasira", "martha mukisa",
         "spice diana", "zex bilangilangi"
     }
@@ -803,7 +691,7 @@ class ValidationService:
             if ug_artist in artist_lower:
                 return True
         
-        # Check for Ugandan name patterns
+        # Ugandan name patterns
         ugandan_patterns = [
             " omutujju", " omulangira", " kawalya", " kigozi",
             " nakimera", " nakitto", " namale", " nantale",
@@ -814,725 +702,452 @@ class ValidationService:
     
     @classmethod
     def validate_song(cls, song: SongItem) -> Tuple[bool, Optional[str]]:
-        """Validate song content, return (is_valid, error_message)"""
-        # Check artist
+        """Validate song content"""
         if not cls.is_ugandan_artist(song.artist):
             return False, f"Artist '{song.artist}' is not recognized as Ugandan"
         
+        if song.region not in config.VALID_REGIONS:
+            return False, f"Invalid region: {song.region}"
+        
         return True, None
 
-class RateLimitService:
-    """Rate limiting service using Redis"""
-    
-    def __init__(self, redis_client: Optional[redis.Redis] = None):
-        self._redis = redis_client
-    
-    async def check_rate_limit(self, key: str, max_requests: int, window: int) -> bool:
-        """Check if request is within rate limit"""
-        if not self._redis:
-            return True  # No rate limiting without Redis
-        
-        try:
-            current = await asyncio.to_thread(self._redis.get, key)
-            if current and int(current) >= max_requests:
-                return False
-            
-            # Increment counter
-            pipe = self._redis.pipeline()
-            pipe.incr(key)
-            pipe.expire(key, window)
-            await asyncio.to_thread(pipe.execute)
-            
-            return True
-            
-        except redis.RedisError:
-            logger.warning("Rate limit check failed, allowing request")
-            return True
-
 # ============================================================================
-# APPLICATION FACTORY
+# LIFECYCLE MANAGEMENT
 # ============================================================================
 
-def create_application() -> FastAPI:
-    """Application factory following Clean Architecture"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifecycle"""
+    # Startup
+    logger.info("UG Board Engine starting up")
+    logger.info(f"Environment: {config.ENVIRONMENT}")
+    logger.info(f"Database: {len(db.songs)} songs loaded")
+    logger.info(f"Regions: {', '.join(config.VALID_REGIONS)}")
     
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        """Application lifecycle management"""
-        # Startup
-        logger.info("UG Board Engine starting up")
-        logger.info(f"Environment: {settings.ENVIRONMENT}")
-        
-        # Initialize database
-        global db, rate_limiter
-        db = HybridDatabase(settings.DATA_DIR, settings.REDIS_URL)
-        rate_limiter = RateLimitService(db._redis)
-        
-        # Wait for initialization
-        await asyncio.sleep(0.1)  # Small delay for async init
-        
-        # Initial stats
-        songs_count = len(db._songs)
-        logger.info(f"Database initialized: {songs_count} songs loaded")
-        
-        if songs_count == 0:
-            logger.info("Database is empty - ready for ingestion")
-        
-        yield
-        
-        # Shutdown
-        logger.info("UG Board Engine shutting down")
-        logger.info(f"Final stats: {len(db._songs)} songs processed")
-        if db._redis:
-            try:
-                await asyncio.to_thread(db._redis.close)
-            except:
-                pass
+    yield
     
-    # Create FastAPI application
-    app = FastAPI(
-        title="UG Board Engine",
-        version="8.3.1",
-        description="Production-ready Ugandan Music Chart System with Regional Support",
-        docs_url="/docs",
-        redoc_url="/redoc",
-        lifespan=lifespan,
-        openapi_tags=[
-            {"name": "Public", "description": "Public endpoints"},
-            {"name": "Charts", "description": "Music charts and trends"},
-            {"name": "Regions", "description": "Ugandan regional data"},
-            {"name": "Ingestion", "description": "Data ingestion endpoints"},
-            {"name": "Admin", "description": "Administrative functions"},
-        ]
-    )
+    # Shutdown
+    logger.info("UG Board Engine shutting down")
+    logger.info(f"Total songs processed: {len(db.songs)}")
+
+# ============================================================================
+# FASTAPI APP
+# ============================================================================
+
+app = FastAPI(
+    title="UG Board Engine",
+    version="8.4.0",
+    description="Official Ugandan Music Chart System with Regional Support",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan,
+    openapi_tags=[
+        {"name": "Public", "description": "Public endpoints"},
+        {"name": "Charts", "description": "Music charts"},
+        {"name": "Regions", "description": "Ugandan regional data"},
+        {"name": "Trending", "description": "Trending songs"},
+        {"name": "Ingestion", "description": "Data ingestion"},
+        {"name": "Admin", "description": "Administrative functions"},
+    ]
+)
+
+# Middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# Global state
+app_start_time = datetime.utcnow()
+request_count = 0
+current_chart_week = datetime.utcnow().strftime("%Y-W%W")
+
+# ============================================================================
+# ENDPOINTS
+# ============================================================================
+
+@app.get("/", tags=["Public"], summary="Service information")
+async def root():
+    """Root endpoint"""
+    global request_count
+    request_count += 1
     
-    # ========================================================================
-    # MIDDLEWARE
-    # ========================================================================
+    window_info = TrendingService.get_current_trending_window()
     
-    # CORS
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS,
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["*"],
-    )
+    return {
+        "service": "UG Board Engine",
+        "version": "8.4.0",
+        "status": "online",
+        "timestamp": datetime.utcnow().isoformat(),
+        "chart_week": current_chart_week,
+        "environment": config.ENVIRONMENT.value,
+        "trending_window": window_info,
+        "ugandan_regions": list(config.VALID_REGIONS),
+        "endpoints": {
+            "health": "/health",
+            "charts": {
+                "top100": "/charts/top100",
+                "regions": "/charts/regions",
+                "region_detail": "/charts/regions/{region}",
+                "trending": "/charts/trending",
+                "current_trending": "/charts/trending/now"
+            },
+            "docs": "/docs"
+        }
+    }
+
+@app.get("/health", tags=["Public"], summary="Health check")
+async def health():
+    """Health check"""
+    uptime = datetime.utcnow() - app_start_time
     
-    # Compression
-    app.add_middleware(GZipMiddleware, minimum_size=1000)
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "uptime_seconds": int(uptime.total_seconds()),
+        "database": {
+            "songs": len(db.songs),
+            "youtube_songs": len(db.youtube_songs),
+            "regions": len(db.regions),
+            "chart_history": len(db.chart_history)
+        },
+        "requests_served": request_count,
+        "chart_week": current_chart_week,
+        "environment": config.ENVIRONMENT.value
+    }
+
+@app.get("/charts/top100", tags=["Charts"], summary="Uganda Top 100")
+async def get_top100(
+    limit: int = Query(100, ge=1, le=200, description="Number of songs")
+):
+    """Get Uganda Top 100 chart"""
+    songs = db.get_top_songs(limit)
     
-    # Request logging middleware
-    @app.middleware("http")
-    async def log_requests(request: Request, call_next):
-        request_id = request.headers.get("X-Request-ID", "N/A")
-        start_time = time.time()
-        
-        logger.info(f"Request {request_id}: {request.method} {request.url.path}")
-        
-        try:
-            response = await call_next(request)
-            process_time = (time.time() - start_time) * 1000
-            
-            logger.info(
-                f"Response {request_id}: {response.status_code} "
-                f"({process_time:.2f}ms)"
-            )
-            
-            response.headers["X-Process-Time"] = str(process_time)
-            response.headers["X-Request-ID"] = request_id
-            
-            return response
-            
-        except Exception as e:
-            process_time = (time.time() - start_time) * 1000
-            logger.error(
-                f"Error {request_id}: {type(e).__name__} in {process_time:.2f}ms - {str(e)}"
-            )
-            raise
+    for i, song in enumerate(songs, 1):
+        song["rank"] = i
     
-    # ========================================================================
-    # GLOBAL STATE
-    # ========================================================================
+    return {
+        "chart": "Uganda Top 100",
+        "week": current_chart_week,
+        "entries": songs,
+        "count": len(songs),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.get("/charts/regions", tags=["Charts", "Regions"], summary="All regions data")
+async def get_all_regions():
+    """Get data for all regions"""
+    stats = db.get_region_stats()
     
-    app.state.start_time = datetime.utcnow()
-    app.state.request_count = 0
-    app.state.current_chart_week = datetime.utcnow().strftime("%Y-W%W")
-    
-    # ========================================================================
-    # EXCEPTION HANDLERS
-    # ========================================================================
-    
-    @app.exception_handler(UGBaseException)
-    async def ug_exception_handler(request: Request, exc: UGBaseException):
-        """Handle UG Board exceptions"""
-        logger.warning(f"UG Exception at {request.url.path}: {exc.code} - {exc.message}")
-        
-        status_code = {
-            "VALIDATION_ERROR": status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "AUTHENTICATION_ERROR": status.HTTP_401_UNAUTHORIZED,
-            "DATABASE_ERROR": status.HTTP_503_SERVICE_UNAVAILABLE,
-            "RATE_LIMIT_ERROR": status.HTTP_429_TOO_MANY_REQUESTS,
-        }.get(exc.code, status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-        return JSONResponse(
-            status_code=status_code,
-            content={
-                "error": exc.code,
-                "message": exc.message,
-                "timestamp": datetime.utcnow().isoformat(),
-                "path": request.url.path,
-                "request_id": request.headers.get("X-Request-ID", "N/A")
-            }
+    return {
+        "regions": stats,
+        "count": len(stats),
+        "timestamp": datetime.utcnow().isoformat(),
+        "week": current_chart_week
+    }
+
+@app.get("/charts/regions/{region}", tags=["Charts", "Regions"], summary="Region detail")
+async def get_region_detail(
+    region: str = FPath(..., description="Ugandan region"),
+    limit: int = Query(10, ge=1, le=50, description="Number of songs")
+):
+    """Get region details"""
+    if region not in config.VALID_REGIONS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Region '{region}' not found. Valid regions: {', '.join(sorted(config.VALID_REGIONS))}"
         )
     
-    @app.exception_handler(HTTPException)
-    async def http_exception_handler(request: Request, exc: HTTPException):
-        """Handle HTTP exceptions"""
-        logger.warning(f"HTTP {exc.status_code} at {request.url.path}: {exc.detail}")
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={
-                "error": exc.detail,
-                "status_code": exc.status_code,
-                "timestamp": datetime.utcnow().isoformat(),
-                "path": request.url.path,
-                "request_id": request.headers.get("X-Request-ID", "N/A")
-            }
-        )
+    songs = db.get_top_songs(limit, region)
+    region_data = config.UGANDAN_REGIONS[region]
     
-    @app.exception_handler(Exception)
-    async def general_exception_handler(request: Request, exc: Exception):
-        """Handle unexpected exceptions"""
-        error_id = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
-        logger.error(
-            f"Unhandled Exception {error_id} at {request.url.path}: "
-            f"{type(exc).__name__} - {str(exc)}",
-            exc_info=True
-        )
-        
-        detail = "Internal server error" if settings.ENVIRONMENT == Environment.PRODUCTION else str(exc)
-        
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={
-                "error": "INTERNAL_SERVER_ERROR",
-                "message": detail,
-                "error_id": error_id,
-                "timestamp": datetime.utcnow().isoformat(),
-                "path": request.url.path,
-                "request_id": request.headers.get("X-Request-ID", "N/A")
-            }
-        )
+    for i, song in enumerate(songs, 1):
+        song["rank"] = i
     
-    # ========================================================================
-    # PUBLIC ENDPOINTS
-    # ========================================================================
+    return {
+        "region": region,
+        "region_name": region_data["name"],
+        "songs": songs,
+        "districts": region_data["districts"],
+        "notable_musicians": region_data["musicians"],
+        "week": current_chart_week,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.get("/charts/trending", tags=["Charts", "Trending"], summary="Trending songs")
+async def get_trending(
+    limit: int = Query(10, ge=1, le=50, description="Number of songs")
+):
+    """Get trending songs"""
+    songs = db.get_trending_songs(limit)
+    window_info = TrendingService.get_current_trending_window()
     
-    @app.get("/", tags=["Public"], summary="Service information")
-    async def root(request: Request):
-        """Root endpoint with comprehensive service information"""
-        app.state.request_count += 1
+    for i, song in enumerate(songs, 1):
+        song["trend_rank"] = i
+    
+    return {
+        "chart": f"Trending Now - Uganda",
+        "entries": songs,
+        "count": len(songs),
+        "trending_window": window_info,
+        "rotation": f"{config.TRENDING_WINDOW_HOURS}-hour window rotation",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.get("/charts/trending/now", tags=["Charts", "Trending"], summary="Current trending song")
+async def get_current_trending():
+    """Get current trending song"""
+    trending_songs = db.get_trending_songs(1)
+    
+    if not trending_songs:
+        raise HTTPException(status_code=404, detail="No trending songs available")
+    
+    window_info = TrendingService.get_current_trending_window()
+    
+    return {
+        "trending_song": trending_songs[0],
+        "trending_window": window_info,
+        "rotation": f"Changes every {config.TRENDING_WINDOW_HOURS} hours",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.post("/ingest/youtube", tags=["Ingestion"], summary="Ingest YouTube data")
+async def ingest_youtube(
+    payload: YouTubeIngestPayload,
+    auth: bool = Depends(AuthService.verify_youtube)
+):
+    """Ingest YouTube data"""
+    try:
+        valid_songs = []
+        validation_errors = []
         
-        trending_window = time.time() // (settings.TRENDING_WINDOW_HOURS * 3600)
+        for song in payload.items:
+            is_valid, error = ValidationService.validate_song(song)
+            if is_valid:
+                valid_songs.append(song)
+            else:
+                validation_errors.append({
+                    "song": f"{song.title} - {song.artist}",
+                    "error": error
+                })
+        
+        if not valid_songs:
+            raise ValidationError("No valid Ugandan songs found")
+        
+        added_count = db.add_songs(valid_songs, f"youtube_{payload.source}")
+        
+        logger.info(f"YouTube ingestion: {added_count} songs from {payload.source}")
         
         return {
-            "service": "UG Board Engine",
-            "version": "8.3.1",
-            "status": "online",
-            "environment": settings.ENVIRONMENT,
-            "timestamp": datetime.utcnow().isoformat(),
-            "uptime_seconds": int((datetime.utcnow() - app.state.start_time).total_seconds()),
-            "request_count": app.state.request_count,
-            "chart_week": app.state.current_chart_week,
-            "features": {
-                "trending_window_hours": settings.TRENDING_WINDOW_HOURS,
-                "cache_enabled": db._redis is not None,
-                "max_db_size": settings.MAX_DB_SIZE
-            },
-            "endpoints": {
-                "health": "/health",
-                "charts": {
-                    "top100": "/charts/top100",
-                    "regions": "/charts/regions",
-                    "region_detail": "/charts/regions/{region}",
-                    "trending": "/charts/trending",
-                    "current_trending": "/charts/trending/now"
-                },
-                "docs": "/docs",
-                "openapi": "/openapi.json"
-            },
-            "uganda": {
-                "regions": list(Region.__members__.keys()),
-                "trending_window": f"Every {settings.TRENDING_WINDOW_HOURS} hours",
-                "current_window": int(trending_window)
-            }
-        }
-    
-    @app.get("/health", tags=["Public"], summary="Health check")
-    async def health():
-        """Comprehensive health check with dependency verification"""
-        health_status = {
-            "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
-            "version": "8.3.1",
-            "environment": settings.ENVIRONMENT,
-            "checks": {}
-        }
-        
-        # Database check
-        try:
-            songs_count = len(db._songs)
-            health_status["checks"]["database"] = {
-                "status": "healthy",
-                "songs": songs_count,
-                "regions": len(db._regions),
-                "chart_history": len(db._chart_history)
-            }
-        except Exception as e:
-            health_status["checks"]["database"] = {
-                "status": "unhealthy",
-                "error": str(e)
-            }
-            health_status["status"] = "degraded"
-        
-        # Redis check
-        if db._redis:
-            try:
-                await asyncio.to_thread(db._redis.ping)
-                info = await asyncio.to_thread(db._redis.info)
-                health_status["checks"]["redis"] = {
-                    "status": "healthy",
-                    "used_memory": info.get("used_memory_human", "N/A"),
-                    "connected_clients": info.get("connected_clients", 0)
-                }
-            except Exception as e:
-                health_status["checks"]["redis"] = {
-                    "status": "unhealthy",
-                    "error": str(e)
-                }
-                health_status["status"] = "degraded"
-        
-        # System metrics
-        health_status["system"] = {
-            "uptime_seconds": int((datetime.utcnow() - app.state.start_time).total_seconds()),
-            "requests_served": app.state.request_count,
-            "current_chart_week": app.state.current_chart_week,
-            "python_version": sys.version.split()[0]
-        }
-        
-        return health_status
-    
-    # ========================================================================
-    # CHARTS ENDPOINTS
-    # ========================================================================
-    
-    @app.get("/charts/top100", tags=["Charts"], summary="Uganda Top 100")
-    async def get_top100(
-        limit: int = Query(100, ge=1, le=200, description="Number of songs"),
-        request: Request = None
-    ):
-        """Get Uganda Top 100 chart"""
-        try:
-            songs = await db.get_top_songs(limit)
-            
-            for i, song in enumerate(songs, 1):
-                song["rank"] = i
-                song["rank_change"] = "new"  # Placeholder for rank change logic
-            
-            return {
-                "chart": "Uganda Top 100",
-                "week": app.state.current_chart_week,
-                "entries": songs,
-                "count": len(songs),
-                "timestamp": datetime.utcnow().isoformat(),
-                "cache_info": "Redis cached" if db._redis else "No cache"
-            }
-        except Exception as e:
-            logger.error(f"Failed to get top100: {e}")
-            raise DatabaseError("Failed to retrieve top 100 chart")
-    
-    @app.get("/charts/regions", tags=["Charts", "Regions"], summary="All regions data")
-    async def get_all_regions():
-        """Get comprehensive data for all Ugandan regions"""
-        try:
-            stats = await db.get_region_stats()
-            
-            return {
-                "regions": stats,
-                "count": len(stats),
-                "timestamp": datetime.utcnow().isoformat(),
-                "week": app.state.current_chart_week
-            }
-        except Exception as e:
-            logger.error(f"Failed to get region stats: {e}")
-            raise DatabaseError("Failed to retrieve region statistics")
-    
-    @app.get("/charts/regions/{region}", tags=["Charts", "Regions"], summary="Region detail")
-    async def get_region_detail(
-        region: Region = FPath(..., description="Ugandan region"),
-        limit: int = Query(10, ge=1, le=50, description="Number of songs")
-    ):
-        """Get detailed information for a specific region"""
-        try:
-            # Get top songs for region
-            songs = await db.get_top_songs(limit, region)
-            
-            for i, song in enumerate(songs, 1):
-                song["rank"] = i
-            
-            # Get region stats
-            stats = await db.get_region_stats()
-            region_stats = stats.get(region.value, {})
-            
-            return {
-                "region": region.value,
-                "region_name": region_stats.get("name", region.value.capitalize()),
-                "songs": songs,
-                "stats": region_stats,
-                "count": len(songs),
-                "timestamp": datetime.utcnow().isoformat(),
-                "week": app.state.current_chart_week
-            }
-        except Exception as e:
-            logger.error(f"Failed to get region detail for {region}: {e}")
-            raise DatabaseError(f"Failed to retrieve region data for {region}")
-    
-    @app.get("/charts/trending", tags=["Charts"], summary="Trending songs")
-    async def get_trending(
-        limit: int = Query(10, ge=1, le=50, description="Number of songs")
-    ):
-        """Get trending songs with 8-hour window rotation"""
-        try:
-            songs = await db.get_trending_songs(limit)
-            
-            for i, song in enumerate(songs, 1):
-                song["trend_rank"] = i
-            
-            current_window = int(time.time() // (settings.TRENDING_WINDOW_HOURS * 3600))
-            
-            return {
-                "chart": f"Trending Now - Uganda (Every {settings.TRENDING_WINDOW_HOURS}h)",
-                "entries": songs,
-                "count": len(songs),
-                "window": {
-                    "current": current_window,
-                    "hours": settings.TRENDING_WINDOW_HOURS,
-                    "next_change_seconds": (current_window + 1) * settings.TRENDING_WINDOW_HOURS * 3600 - time.time()
-                },
-                "timestamp": datetime.utcnow().isoformat(),
-                "algorithm": "8-hour deterministic rotation"
-            }
-        except Exception as e:
-            logger.error(f"Failed to get trending songs: {e}")
-            raise DatabaseError("Failed to retrieve trending songs")
-    
-    @app.get("/charts/trending/now", tags=["Charts"], summary="Current trending song")
-    async def get_current_trending():
-        """Get the current trending song for the window"""
-        try:
-            trending_songs = await db.get_trending_songs(1)
-            
-            if not trending_songs:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No trending songs available"
-                )
-            
-            current_window = int(time.time() // (settings.TRENDING_WINDOW_HOURS * 3600))
-            
-            return {
-                "trending_song": trending_songs[0],
-                "window": {
-                    "current": current_window,
-                    "hours": settings.TRENDING_WINDOW_HOURS,
-                    "description": f"Changes every {settings.TRENDING_WINDOW_HOURS} hours"
-                },
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Failed to get current trending: {e}")
-            raise DatabaseError("Failed to retrieve current trending song")
-    
-    # ========================================================================
-    # INGESTION ENDPOINTS
-    # ========================================================================
-    
-    @app.post("/ingest/youtube", tags=["Ingestion"], summary="Ingest YouTube data")
-    async def ingest_youtube(
-        payload: YouTubeIngestPayload,
-        auth: bool = Depends(AuthenticationService.verify_youtube)
-    ):
-        """Ingest YouTube data with Ugandan validation"""
-        try:
-            valid_songs = []
-            validation_errors = []
-            
-            for song in payload.items:
-                is_valid, error = ValidationService.validate_song(song)
-                if is_valid:
-                    valid_songs.append(song)
-                else:
-                    validation_errors.append({
-                        "song": f"{song.title} - {song.artist}",
-                        "error": error
-                    })
-            
-            if not valid_songs:
-                raise ValidationError(
-                    f"No valid Ugandan songs found. "
-                    f"Errors: {[e['error'] for e in validation_errors[:3]]}"
-                )
-            
-            # Add to database
-            added_count = await db.add_songs(valid_songs, f"youtube_{payload.source}")
-            
-            # Log ingestion
-            logger.info(
-                f"YouTube ingestion from {payload.source}: "
-                f"{added_count} songs added, "
-                f"{len(validation_errors)} failed validation"
-            )
-            
-            return {
-                "status": "success",
-                "message": f"Ingested {added_count} Ugandan YouTube songs",
-                "statistics": {
-                    "received": len(payload.items),
-                    "valid": len(valid_songs),
-                    "added": added_count,
-                    "duplicates": len(valid_songs) - added_count,
-                    "invalid": len(validation_errors)
-                },
-                "validation_errors": validation_errors[:10],  # Limit errors in response
-                "source": payload.source,
-                "category": payload.category,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            
-        except ValidationError:
-            raise
-        except Exception as e:
-            logger.error(f"YouTube ingestion failed: {e}", exc_info=True)
-            raise DatabaseError(f"YouTube ingestion failed: {str(e)}")
-    
-    @app.post("/ingest/radio", tags=["Ingestion"], summary="Ingest radio data")
-    async def ingest_radio(
-        payload: IngestPayload,
-        auth: bool = Depends(AuthenticationService.verify_ingest)
-    ):
-        """Ingest radio data"""
-        try:
-            # Basic validation
-            valid_songs = []
-            for song in payload.items:
-                is_valid, error = ValidationService.validate_song(song)
-                if is_valid:
-                    valid_songs.append(song)
-            
-            if not valid_songs:
-                raise ValidationError("No valid Ugandan songs found")
-            
-            added_count = await db.add_songs(valid_songs, f"radio_{payload.source}")
-            
-            logger.info(f"Radio ingestion from {payload.source}: {added_count} songs added")
-            
-            return {
-                "status": "success",
-                "message": f"Ingested {added_count} radio songs",
+            "status": "success",
+            "message": f"Ingested {added_count} Ugandan YouTube songs",
+            "statistics": {
+                "received": len(payload.items),
+                "valid": len(valid_songs),
                 "added": added_count,
-                "source": payload.source,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            
-        except ValidationError:
-            raise
-        except Exception as e:
-            logger.error(f"Radio ingestion failed: {e}")
-            raise DatabaseError(f"Radio ingestion failed: {str(e)}")
-    
-    @app.post("/ingest/tv", tags=["Ingestion"], summary="Ingest TV data")
-    async def ingest_tv(
-        payload: IngestPayload,
-        auth: bool = Depends(AuthenticationService.verify_ingest)
-    ):
-        """Ingest TV data"""
-        try:
-            # Basic validation
-            valid_songs = []
-            for song in payload.items:
-                is_valid, error = ValidationService.validate_song(song)
-                if is_valid:
-                    valid_songs.append(song)
-            
-            if not valid_songs:
-                raise ValidationError("No valid Ugandan songs found")
-            
-            added_count = await db.add_songs(valid_songs, f"tv_{payload.source}")
-            
-            logger.info(f"TV ingestion from {payload.source}: {added_count} songs added")
-            
-            return {
-                "status": "success",
-                "message": f"Ingested {added_count} TV songs",
-                "added": added_count,
-                "source": payload.source,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            
-        except ValidationError:
-            raise
-        except Exception as e:
-            logger.error(f"TV ingestion failed: {e}")
-            raise DatabaseError(f"TV ingestion failed: {str(e)}")
-    
-    # ========================================================================
-    # ADMIN ENDPOINTS
-    # ========================================================================
-    
-    @app.get("/admin/health", tags=["Admin"], summary="Admin health check")
-    async def admin_health(auth: bool = Depends(AuthenticationService.verify_admin)):
-        """Admin-only detailed health check"""
-        health_data = await health()  # Reuse public health endpoint
-        
-        # Add admin-specific data
-        health_data["admin"] = {
-            "authenticated": True,
-            "environment": settings.ENVIRONMENT,
-            "config": {
-                "max_db_size": settings.MAX_DB_SIZE,
-                "cache_ttl": settings.CACHE_TTL,
-                "trending_window": settings.TRENDING_WINDOW_HOURS
+                "duplicates": len(valid_songs) - added_count,
+                "invalid": len(validation_errors)
             },
-            "security": {
-                "admin_token_set": bool(settings.ADMIN_TOKEN.get_secret_value()),
-                "ingest_token_set": bool(settings.INGEST_TOKEN.get_secret_value()),
-                "youtube_token_set": bool(settings.YOUTUBE_TOKEN.get_secret_value())
-            }
+            "validation_errors": validation_errors[:5],
+            "source": payload.source,
+            "timestamp": datetime.utcnow().isoformat()
         }
         
-        return health_data
-    
-    @app.post("/admin/publish/weekly", tags=["Admin"], summary="Publish weekly chart")
-    async def publish_weekly(auth: bool = Depends(AuthenticationService.verify_admin)):
-        """Publish weekly chart for all regions"""
-        try:
-            snapshot = await db.publish_weekly_chart(app.state.current_chart_week)
-            
-            # Update chart week for next publication
-            app.state.current_chart_week = (
-                datetime.utcnow() + timedelta(days=7)
-            ).strftime("%Y-W%W")
-            
-            logger.info(f"Weekly chart published for week {snapshot['week']}")
-            
-            return {
-                "status": "success",
-                "message": "Weekly chart published successfully",
-                "week": snapshot["week"],
-                "published_at": snapshot["published_at"],
-                "summary": {
-                    "top100_count": len(snapshot["top100"]),
-                    "regions_published": len(snapshot["regions"]),
-                    "total_songs": len(db._songs),
-                    "total_plays": sum(s.get("plays", 0) for s in db._songs)
-                },
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            
-        except Exception as e:
-            logger.error(f"Weekly publish failed: {e}", exc_info=True)
-            raise DatabaseError(f"Failed to publish weekly chart: {str(e)}")
-    
-    @app.get("/admin/index", tags=["Admin"], summary="Admin publication index")
-    async def admin_index(auth: bool = Depends(AuthenticationService.verify_admin)):
-        """Admin-only detailed publication index"""
-        try:
-            return {
-                "current_week": app.state.current_chart_week,
-                "chart_history": db._chart_history[-10:],  # Last 10 weeks
-                "statistics": {
-                    "total_publications": len(db._chart_history),
-                    "first_publication": db._chart_history[0]["week"] if db._chart_history else None,
-                    "last_publication": db._chart_history[-1]["week"] if db._chart_history else None,
-                    "songs_by_region": {
-                        region: len(data["songs"])
-                        for region, data in db._regions.items()
-                    }
-                },
-                "database": {
-                    "total_songs": len(db._songs),
-                    "youtube_songs": len([s for s in db._songs if s.get("source", "").startswith("youtube_")]),
-                    "radio_songs": len([s for s in db._songs if s.get("source", "").startswith("radio_")]),
-                    "tv_songs": len([s for s in db._songs if s.get("source", "").startswith("tv_")])
-                },
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        except Exception as e:
-            logger.error(f"Admin index failed: {e}")
-            raise DatabaseError(f"Failed to retrieve admin index: {str(e)}")
-    
-    # ========================================================================
-    # METRICS ENDPOINT (Prometheus compatible)
-    # ========================================================================
-    
-    @app.get("/metrics", include_in_schema=False)
-    async def metrics():
-        """Prometheus metrics endpoint"""
-        metrics_data = []
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"YouTube ingestion error: {e}")
+        raise HTTPException(status_code=500, detail=f"YouTube ingestion error: {str(e)}")
+
+@app.post("/ingest/radio", tags=["Ingestion"], summary="Ingest radio data")
+async def ingest_radio(
+    payload: IngestPayload,
+    auth: bool = Depends(AuthService.verify_ingest)
+):
+    """Ingest radio data"""
+    try:
+        valid_songs = []
+        for song in payload.items:
+            is_valid, error = ValidationService.validate_song(song)
+            if is_valid:
+                valid_songs.append(song)
         
-        # Application metrics
-        metrics_data.append(f"ugboard_app_uptime_seconds {int((datetime.utcnow() - app.state.start_time).total_seconds())}")
-        metrics_data.append(f"ugboard_app_requests_total {app.state.request_count}")
-        metrics_data.append(f"ugboard_app_songs_total {len(db._songs)}")
-        metrics_data.append(f"ugboard_app_regions_total {len(db._regions)}")
+        if not valid_songs:
+            raise ValidationError("No valid Ugandan songs found")
         
-        # Region-specific metrics
-        for region_code, region_data in db._regions.items():
-            songs_count = len(region_data["songs"])
-            total_plays = sum(s.get("plays", 0) for s in region_data["songs"])
-            metrics_data.append(f'ugboard_region_songs_total{{region="{region_code}"}} {songs_count}')
-            metrics_data.append(f'ugboard_region_plays_total{{region="{region_code}"}} {total_plays}')
+        added_count = db.add_songs(valid_songs, f"radio_{payload.source}")
         
-        return Response(content="\n".join(metrics_data), media_type="text/plain")
+        return {
+            "status": "success",
+            "message": f"Ingested {added_count} radio songs",
+            "added": added_count,
+            "source": payload.source,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"Radio ingestion error: {e}")
+        raise HTTPException(status_code=500, detail=f"Radio ingestion error: {str(e)}")
+
+@app.post("/ingest/tv", tags=["Ingestion"], summary="Ingest TV data")
+async def ingest_tv(
+    payload: IngestPayload,
+    auth: bool = Depends(AuthService.verify_ingest)
+):
+    """Ingest TV data"""
+    try:
+        valid_songs = []
+        for song in payload.items:
+            is_valid, error = ValidationService.validate_song(song)
+            if is_valid:
+                valid_songs.append(song)
+        
+        if not valid_songs:
+            raise ValidationError("No valid Ugandan songs found")
+        
+        added_count = db.add_songs(valid_songs, f"tv_{payload.source}")
+        
+        return {
+            "status": "success",
+            "message": f"Ingested {added_count} TV songs",
+            "added": added_count,
+            "source": payload.source,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"TV ingestion error: {e}")
+        raise HTTPException(status_code=500, detail=f"TV ingestion error: {str(e)}")
+
+@app.get("/admin/health", tags=["Admin"], summary="Admin health check")
+async def admin_health(auth: bool = Depends(AuthService.verify_admin)):
+    """Admin health check"""
+    uptime = datetime.utcnow() - app_start_time
     
-    return app
+    return {
+        "status": "admin_authenticated",
+        "timestamp": datetime.utcnow().isoformat(),
+        "system": {
+            "uptime": str(uptime).split('.')[0],
+            "requests_served": request_count,
+            "environment": config.ENVIRONMENT.value
+        },
+        "database": {
+            "total_songs": len(db.songs),
+            "unique_artists": len(set(s.get("artist", "") for s in db.songs)),
+            "regions": list(db.regions.keys()),
+            "chart_history": len(db.chart_history)
+        },
+        "cache": {
+            "redis_available": db._redis is not None,
+            "cache_ttl": config.CACHE_TTL
+        }
+    }
+
+@app.post("/admin/publish/weekly", tags=["Admin"], summary="Publish weekly chart")
+async def publish_weekly(auth: bool = Depends(AuthService.verify_admin)):
+    """Publish weekly chart"""
+    try:
+        result = db.publish_weekly_chart(current_chart_week)
+        
+        # Update chart week
+        global current_chart_week
+        current_chart_week = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-W%W")
+        
+        return {
+            "status": "success",
+            "message": "Weekly chart published successfully",
+            "week": result["week"],
+            "published_at": result["published_at"],
+            "summary": {
+                "top100_count": len(result["top100"]),
+                "regions_published": len(result["regions"]),
+                "total_songs": len(db.songs)
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Weekly publish error: {e}")
+        raise HTTPException(status_code=500, detail=f"Publish error: {str(e)}")
+
+@app.get("/admin/index", tags=["Admin"], summary="Admin publication index")
+async def admin_index(auth: bool = Depends(AuthService.verify_admin)):
+    """Admin publication index"""
+    return {
+        "current_week": current_chart_week,
+        "chart_history": db.chart_history[-5:],
+        "publication_stats": {
+            "total_publications": len(db.chart_history),
+            "first_publication": db.chart_history[0]["week"] if db.chart_history else None,
+            "last_publication": db.chart_history[-1]["week"] if db.chart_history else None
+        },
+        "database_stats": {
+            "total_songs": len(db.songs),
+            "songs_by_region": {region: len(data["songs"]) for region, data in db.regions.items()}
+        }
+    }
 
 # ============================================================================
-# GLOBAL INSTANCES
+# ERROR HANDLERS
 # ============================================================================
 
-app = create_application()
-db: Optional[HybridDatabase] = None
-rate_limiter: Optional[RateLimitService] = None
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """HTTP exception handler"""
+    logger.warning(f"HTTP {exc.status_code} at {request.url.path}: {exc.detail}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.detail,
+            "status_code": exc.status_code,
+            "timestamp": datetime.utcnow().isoformat(),
+            "path": request.url.path
+        }
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """General exception handler"""
+    logger.error(f"Unhandled exception at {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal server error",
+            "detail": str(exc) if config.ENVIRONMENT == Environment.DEVELOPMENT else "Contact support",
+            "timestamp": datetime.utcnow().isoformat(),
+            "path": request.url.path
+        }
+    )
 
 # ============================================================================
-# ENTRY POINT
+# MAIN ENTRY POINT
 # ============================================================================
 
 if __name__ == "__main__":
     import uvicorn
     
-    # Configuration
-    host = "0.0.0.0"
     port = int(os.getenv("PORT", 8000))
     
-    # Startup message
-    logger.info("UG Board Engine v8.3.1 starting...")
-    logger.info(f"Environment: {settings.ENVIRONMENT}")
-    logger.info(f"Chart Week: {app.state.current_chart_week}")
-    logger.info(f"Data Directory: {settings.DATA_DIR}")
-    logger.info(f"URL: http://{host}:{port}")
-    logger.info(f"Docs: http://{host}:{port}/docs")
-    logger.info(f"Health: http://{host}:{port}/health")
+    print(f"""
+UG Board Engine v8.4.0
+Environment: {config.ENVIRONMENT.value}
+Chart Week: {current_chart_week}
+URL: http://localhost:{port}
+Docs: http://localhost:{port}/docs
+Database: {len(db.songs)} songs loaded
+Regions: {', '.join(config.VALID_REGIONS)}
+""")
     
-    # Run server
     uvicorn.run(
         app,
-        host=host,
+        host="0.0.0.0",
         port=port,
-        log_level="info",
-        access_log=True
+        log_level="info"
     )
