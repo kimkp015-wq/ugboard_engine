@@ -236,3 +236,13 @@ async def http_exception_handler(request, exc):
         "path": str(request.url.path),
         "environment": os.getenv("ENV", "development")
     }
+    # main.py at ROOT level
+from fastapi import FastAPI
+app = FastAPI()
+
+@app.get("/")
+def root():
+    return {"status": "online"}
+    # main.py at ROOT level
+from fastapi import FastAPI
+app = FastAPI()
