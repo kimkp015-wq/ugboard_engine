@@ -1,23 +1,10 @@
-# Core
+# Core dependencies - ONLY what you need
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-
-# Dependencies
 pydantic==2.5.0
+
+# Your TV scraper dependencies (from your repo)
+beautifulsoup4==4.12.2
+requests==2.31.0
+aiohttp==3.9.1
 python-multipart==0.0.6
-
-# Rate Limiting & Caching
-slowapi==0.1.8
-fastapi-cache2==0.2.1
-
-# Optional for production
-python-jose[cryptography]==3.3.0  # JWT support
-passlib[bcrypt]==1.7.4  # Password hashing
-httpx==0.25.1  # Async HTTP client
-
-# Monitoring
-prometheus-client==0.19.0
-
-# Development
-pytest==7.4.3
-pytest-asyncio==0.21.1
