@@ -1,97 +1,61 @@
-name: TV & Radio Scraper
+name: TV Scraper
 
 on:
   schedule:
     - cron: '*/30 * * * *'  # Every 30 minutes
-  workflow_dispatch:
+  workflow_dispatch:  # Manual trigger
 
 jobs:
-  scrape:
+  scrape-tv:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
     env:
       ENGINE_URL: https://ugboard-engine.onrender.com
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Python
+    - name: Set up Python 3.11
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
     
     - name: Install dependencies
-      run: pip install requests
+      run: |
+        pip install aiohttp pyyaml
+        mkdir -p logs
     
-    - name: Run TV Scraper Test
+    - name: Run TV Scraper (Single Cycle)
       env:
         INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
       run: |
-        python -c "
-import requests
-import os
-from datetime import datetime
-
-engine_url = os.getenv('ENGINE_URL')
-token = os.getenv('INGEST_TOKEN')
-
-if not token:
-    print('❌ INGEST_TOKEN not set')
-    exit(1)
-
-# Test payload with Ugandan music
-payload = {
-    'items': [
-        {
-            'title': 'GitHub Actions - TV Test',
-            'artist': 'Bobi Wine',
-            'plays': 100,
-            'score': 95.0,
-            'station': 'GitHub Actions',
-            'genre': 'kadongo kamu'
-        },
-        {
-            'title': 'GitHub Actions - Radio Test',
-            'artist': 'Sheebah Karungi',
-            'plays': 90,
-            'score': 94.0,
-            'station': 'GitHub Actions',
-            'genre': 'dancehall'
-        }
-    ],
-    'source': 'github_actions_test',
-    'timestamp': datetime.utcnow().isoformat()
-}
-
-headers = {
-    'Authorization': f'Bearer {token}',
-    'Content-Type': 'application/json'
-}
-
-try:
-    response = requests.post(f'{engine_url}/ingest/tv', 
-                           json=payload, 
-                           headers=headers,
-                           timeout=30)
+        python scripts/tv_scraper.py \
+          --config config/tv_stations.yaml \
+          --engine-url $ENGINE_URL \
+          --token $INGEST_TOKEN \
+          --single-cycle \
+          --verbose
     
-    if response.status_code == 200:
-        result = response.json()
-        print(f'✅ Success: {result[\"message\"]}')
-        print(f'   Valid: {result[\"valid_count\"]}, Invalid: {result[\"invalid_count\"]}')
-    else:
-        print(f'❌ Failed: HTTP {response.status_code}')
-        print(f'   Error: {response.text}')
-        
-except Exception as e:
-    print(f'❌ Exception: {e}')
-        "
+    - name: Upload Scraping Logs
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: tv-scraper-logs
+        path: logs/
+        retention-days: 7
     
-    - name: Notify Status
+    - name: Notify Success
+      if: success()
       run: |
-        if [ "${{ job.status }}" = "success" ]; then
-          echo "✅ Scraping completed successfully"
-          echo "Time: $(date)"
-          echo "Engine: $ENGINE_URL"
-        else
-          echo "❌ Scraping failed"
-          exit 1
-        fi
+        echo "✅ TV scraping completed successfully"
+        echo "Time: $(date -u)"
+        echo "Engine: $ENGINE_URL"
+        echo "Logs saved as artifact"
+    
+    - name: Notify Failure
+      if: failure()
+      run: |
+        echo "❌ TV scraping failed"
+        echo "Check logs for details"
+        exit 1
