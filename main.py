@@ -1,6 +1,6 @@
 """
 UG Board Engine - Consolidated Main Application
-Combines API functionality with proper health endpoints
+Combines API functionality with proper health endpoints and rate limiting
 """
 import os
 from datetime import datetime
@@ -11,18 +11,11 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-# Add to main.py
+
+# Rate limiting imports - ADD THESE
 from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-app.add_exception_handler(429, _rate_limit_exceeded_handler)
-
-@app.get("/charts/top100")
-@limiter.limit("100/minute")
-async def get_top100():
-    # Existing code
 
 # ==================== Configuration ====================
 # Get tokens from environment with secure defaults
@@ -118,6 +111,15 @@ UGANDAN_SONGS = [
     {"id": "8", "title": "Sembera", "artist": "Feffe Busi", "plays": 6500, "score": 84.3, "genre": "hip hop"},
 ]
 
+# ==================== Rate Limiter Setup ====================
+# Initialize the limiter BEFORE creating the FastAPI app
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["100/minute"],  # Default rate limit
+    storage_uri="memory://",  # In-memory storage for simplicity
+    strategy="fixed-window"  # Or "moving-window" for smoother limiting
+)
+
 # ==================== FastAPI App ====================
 app = FastAPI(
     title="UG Board Engine",
@@ -127,6 +129,24 @@ app = FastAPI(
     redoc_url="/redoc" if not IS_PRODUCTION else None,
     openapi_url="/openapi.json" if not IS_PRODUCTION else None,
 )
+
+# Configure the limiter with the app
+app.state.limiter = limiter
+
+# Add rate limit exceeded handler
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    """Custom handler for rate limit exceeded errors."""
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "Rate limit exceeded",
+            "detail": f"Too many requests. Please try again in {exc.retry_after} seconds.",
+            "retry_after": exc.retry_after,
+            "timestamp": datetime.utcnow().isoformat(),
+            "path": str(request.url.path)
+        }
+    )
 
 # Add CORS middleware
 app.add_middleware(
@@ -139,7 +159,8 @@ app.add_middleware(
 
 # ==================== Health Endpoints ====================
 @app.get("/health")
-async def health_check() -> Dict[str, Any]:
+@limiter.limit("30/minute")  # More generous limit for health checks
+async def health_check(request: Request) -> Dict[str, Any]:
     """
     Health check endpoint for Render.com and monitoring systems.
     This endpoint MUST exist at the root level for Render health checks.
@@ -149,6 +170,7 @@ async def health_check() -> Dict[str, Any]:
         "authentication": "configured" if ADMIN_TOKEN else "not_configured",
         "database": "in_memory",  # Update if using real database
         "environment": ENVIRONMENT,
+        "rate_limiting": "enabled"
     }
     
     overall_status = "healthy" if ADMIN_TOKEN else "degraded"
@@ -164,7 +186,8 @@ async def health_check() -> Dict[str, Any]:
     }
 
 @app.get("/health/detailed", dependencies=[Depends(verify_internal_token)])
-async def detailed_health_check() -> Dict[str, Any]:
+@limiter.limit("10/minute")  # Stricter limit for detailed health
+async def detailed_health_check(request: Request) -> Dict[str, Any]:
     """Detailed health check with dependency verification."""
     # Add actual dependency checks here when you have them
     dependencies = {
@@ -172,6 +195,7 @@ async def detailed_health_check() -> Dict[str, Any]:
         "memory": {"status": "healthy", "usage_percent": 45.2},
         "scraper_system": {"status": "unknown", "note": "Not implemented"},
         "external_apis": {"status": "healthy", "note": "No external dependencies"},
+        "rate_limiting": {"status": "enabled", "strategy": "fixed-window"}
     }
     
     return {
@@ -185,7 +209,8 @@ async def detailed_health_check() -> Dict[str, Any]:
 
 # ==================== Public Endpoints ====================
 @app.get("/")
-async def root() -> Dict[str, Any]:
+@limiter.limit("60/minute")  # Moderate limit for root endpoint
+async def root(request: Request) -> Dict[str, Any]:
     """Root endpoint with service information."""
     return {
         "service": "UG Board Engine - Ugandan Music",
@@ -209,7 +234,8 @@ async def root() -> Dict[str, Any]:
     }
 
 @app.get("/charts/top100")
-async def get_top100(limit: int = 100) -> Dict[str, Any]:
+@limiter.limit("100/minute")  # Chart endpoint with specific limit
+async def get_top100(request: Request, limit: int = 100) -> Dict[str, Any]:
     """Get Uganda Top 100 chart - Public"""
     songs = UGANDAN_SONGS.copy()
     songs.sort(key=lambda x: x["score"], reverse=True)
@@ -229,7 +255,9 @@ async def get_top100(limit: int = 100) -> Dict[str, Any]:
 
 # ==================== Authenticated Endpoints ====================
 @app.post("/ingest/tv")
+@limiter.limit("50/minute")  # Lower limit for ingestion endpoints
 async def ingest_tv(
+    request: Request,
     payload: TVIngestionPayload,
     auth: bool = Depends(verify_ingest_token)
 ) -> Dict[str, Any]:
@@ -261,7 +289,9 @@ async def ingest_tv(
     }
 
 @app.post("/ingest/radio")
+@limiter.limit("50/minute")
 async def ingest_radio(
+    request: Request,
     payload: TVIngestionPayload,
     auth: bool = Depends(verify_ingest_token)
 ) -> Dict[str, Any]:
@@ -285,7 +315,8 @@ async def ingest_radio(
 
 # ==================== Admin Endpoints ====================
 @app.get("/admin/status", dependencies=[Depends(verify_admin_token)])
-async def admin_status() -> Dict[str, Any]:
+@limiter.limit("30/minute")  # Stricter limit for admin endpoints
+async def admin_status(request: Request) -> Dict[str, Any]:
     """Admin status endpoint - Requires ADMIN_TOKEN"""
     return {
         "status": "admin_authenticated",
@@ -304,7 +335,8 @@ async def admin_status() -> Dict[str, Any]:
     }
 
 @app.post("/admin/week/publish", dependencies=[Depends(verify_admin_token)])
-async def publish_week() -> Dict[str, Any]:
+@limiter.limit("5/minute")  # Very strict limit for publishing
+async def publish_week(request: Request) -> Dict[str, Any]:
     """Publish weekly chart - Admin only"""
     return {
         "status": "success",
@@ -316,7 +348,11 @@ async def publish_week() -> Dict[str, Any]:
 
 # ==================== Internal Endpoints ====================
 @app.post("/internal/health")
-async def internal_health(auth: bool = Depends(verify_internal_token)) -> Dict[str, Any]:
+@limiter.limit("20/minute")  # Limit internal health checks
+async def internal_health(
+    request: Request,
+    auth: bool = Depends(verify_internal_token)
+) -> Dict[str, Any]:
     """Internal health check - Requires INTERNAL_TOKEN"""
     return {
         "status": "healthy",
@@ -372,6 +408,7 @@ if __name__ == "__main__":
     print(f"Starting UG Board Engine on port {port}")
     print(f"Environment: {ENVIRONMENT}")
     print(f"Docs available at: http://localhost:{port}/docs")
+    print(f"Rate limiting: ENABLED")
     
     uvicorn.run(
         "main:app",
