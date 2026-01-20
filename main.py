@@ -11,6 +11,18 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+# Add to main.py
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(429, _rate_limit_exceeded_handler)
+
+@app.get("/charts/top100")
+@limiter.limit("100/minute")
+async def get_top100():
+    # Existing code
 
 # ==================== Configuration ====================
 # Get tokens from environment with secure defaults
