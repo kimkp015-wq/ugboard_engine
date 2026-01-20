@@ -1,10 +1,11 @@
 """
-UG Board Engine - With TV Scraper Integration (FIXED VERSION)
+UG Board Engine - With TV Scraper Integration (FIXED FOR scripts/tv_scraper.py)
 """
 import os
 import asyncio
 import logging
-from datetime import datetime, timedelta
+import sys
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
@@ -12,35 +13,55 @@ from fastapi import FastAPI, HTTPException, Header, Depends, BackgroundTasks, Qu
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-import aiohttp
+
+# ====== FIX: ADD scripts TO PATH ======
+# Add scripts directory to Python path
+scripts_path = os.path.join(os.path.dirname(__file__), "scripts")
+if os.path.exists(scripts_path):
+    sys.path.insert(0, scripts_path)
 
 # ====== FIX: GLOBAL VARIABLES ======
 tv_scraper = None
 TV_SCRAPER_AVAILABLE = False
 
-# ====== FIX: PROPER SCRAPER IMPORT ======
+# ====== FIX: IMPORT FROM scripts DIRECTORY ======
 try:
-    # Try root level first (your actual file location)
+    # Try to import from scripts directory
     from tv_scraper import TVScraper
     TV_SCRAPER_AVAILABLE = True
-    logging.info("✅ Imported TVScraper from root level")
-except ImportError:
+    logging.info("✅ Imported TVScraper from scripts directory")
+except ImportError as e:
+    logging.warning(f"❌ Could not import TVScraper from scripts: {e}")
+    
+    # Try alternative import paths
     try:
-        # Try src directory
-        from src.tv_scraper import TVScraper
+        # Try direct import
+        import tv_scraper
+        TVScraper = tv_scraper.TVScraper
         TV_SCRAPER_AVAILABLE = True
-        logging.info("✅ Imported TVScraper from src directory")
+        logging.info("✅ Imported TVScraper directly")
     except ImportError:
         # Mock scraper for fallback
         class TVScraper:
             async def scrape_station(self, station_name: str) -> List[Dict[str, Any]]:
-                # Mock data
+                logging.info(f"📺 Mock scraping station: {station_name}")
+                # Mock data matching your scraper output format
                 return [
                     {
-                        "title": f"Demo Song from {station_name}", 
-                        "artist": "Demo Artist", 
-                        "plays": 100, 
-                        "timestamp": datetime.utcnow().isoformat()
+                        "title": f"Nalumansi - {station_name} Edition", 
+                        "artist": "Bobi Wine", 
+                        "plays": 150, 
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "duration": "3:45",
+                        "category": "music"
+                    },
+                    {
+                        "title": f"Sitya Loss - {station_name} Mix", 
+                        "artist": "Eddy Kenzo", 
+                        "plays": 120, 
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "duration": "4:20",
+                        "category": "music"
                     }
                 ]
         TV_SCRAPER_AVAILABLE = False
@@ -52,25 +73,33 @@ INGEST_TOKEN = os.getenv("INGEST_TOKEN", "1994199620002019866")
 INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "1994199620002019866")
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
 
-# Scraper Configuration
+# ====== SCRAPER CONFIGURATION ======
+# Based on your tv_scraper.py structure
 SCRAPER_CONFIG = {
-    "stations": ["ntv", "bukedde", "sanyuka", "spark"],  # Add your actual stations
+    "stations": ["ntv", "bukedde", "sanyuka", "spark"],  # From your TV stations
     "scrape_interval": 3600,  # 1 hour in seconds
     "max_scraping_time": 300,  # 5 minutes max per scrape
-    "enable_auto_scrape": False  # Start with manual scraping first
+    "enable_auto_scrape": False,  # Start with manual scraping
+    "retry_attempts": 3,
+    "retry_delay": 5  # seconds
 }
 
-# Global state for scraping
+# ====== GLOBAL STATE FOR SCRAPING ======
 scraping_state = {
     "last_scrape_time": None,
     "is_scraping": False,
     "scrape_results": {},
-    "errors": []
+    "errors": [],
+    "total_scrapes": 0,
+    "successful_scrapes": 0
 }
 
 # ====== LIFECYCLE MANAGEMENT ======
@@ -81,12 +110,18 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("🚀 UG Board Engine starting up...")
+    logger.info(f"📁 Scripts path: {scripts_path}")
+    logger.info(f"📺 TV Scraper Available: {TV_SCRAPER_AVAILABLE}")
     
     # Initialize scraper
     global tv_scraper
     try:
-        tv_scraper = TVScraper()
-        logger.info(f"✅ TV Scraper initialized successfully (Available: {TV_SCRAPER_AVAILABLE})")
+        if TV_SCRAPER_AVAILABLE:
+            tv_scraper = TVScraper()
+            logger.info("✅ TV Scraper initialized successfully")
+        else:
+            tv_scraper = TVScraper()  # Mock scraper
+            logger.info("⚠️ Using mock TV Scraper")
     except Exception as e:
         logger.error(f"❌ Failed to initialize TV Scraper: {e}")
         tv_scraper = None
@@ -101,7 +136,9 @@ app = FastAPI(
     title="UG Board Engine",
     version="7.0.0",
     description="UG Board Engine with TV Scraping Integration",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
 # ====== MODELS ======
@@ -112,6 +149,8 @@ class SongItem(BaseModel):
     score: Optional[float] = 0.0
     timestamp: Optional[str] = None
     station: Optional[str] = None
+    duration: Optional[str] = None
+    category: Optional[str] = "music"
 
 class IngestPayload(BaseModel):
     items: List[SongItem]
@@ -129,8 +168,9 @@ class ScrapeStatus(BaseModel):
     stations_scraped: List[str]
     total_items: int
     errors: List[str]
+    scraper_available: bool
 
-# ====== AUTHENTICATION ======
+# ====== AUTHENTICATION (YOUR ORIGINAL CODE) ======
 def verify_admin(credentials: HTTPAuthorizationCredentials = Depends(security)):
     if credentials.credentials != ADMIN_TOKEN:
         raise HTTPException(status_code=401, detail="Invalid admin token")
@@ -157,11 +197,12 @@ class Database:
             song_dict = song.dict()
             song_dict["source"] = source
             song_dict["ingested_at"] = datetime.utcnow().isoformat()
+            song_dict["id"] = f"song_{len(self.songs) + 1}"
             self.songs.append(song_dict)
         
-        # Keep only last 1000 songs
-        if len(self.songs) > 1000:
-            self.songs = self.songs[-1000:]
+        # Keep only last 5000 songs
+        if len(self.songs) > 5000:
+            self.songs = self.songs[-5000:]
             
     def get_top_songs(self, limit: int = 100):
         sorted_songs = sorted(self.songs, key=lambda x: x.get("score", 0), reverse=True)
@@ -171,37 +212,56 @@ class Database:
         station_songs = [s for s in self.songs if s.get("station") == station]
         sorted_songs = sorted(station_songs, key=lambda x: x.get("plays", 0), reverse=True)
         return sorted_songs[:limit]
+    
+    def get_stats(self):
+        return {
+            "total_songs": len(self.songs),
+            "unique_artists": len(set(s.get("artist", "") for s in self.songs)),
+            "total_plays": sum(s.get("plays", 0) for s in self.songs),
+            "stations": list(set(s.get("station", "") for s in self.songs if s.get("station")))
+        }
 
 db = Database()
 
 # ====== SCRAPING FUNCTIONS ======
-async def scrape_tv_station(station_name: str) -> List[Dict[str, Any]]:
+async def scrape_tv_station(station_name: str, retry_count: int = 0) -> List[Dict[str, Any]]:
     """
-    Scrape a single TV station
+    Scrape a single TV station with retry logic
     """
     try:
         if not tv_scraper:
             raise Exception("TV scraper not initialized")
         
-        logger.info(f"📺 Scraping station: {station_name}")
+        logger.info(f"📺 Scraping station: {station_name} (attempt {retry_count + 1})")
         
         # Add timeout to prevent hanging
         async with asyncio.timeout(SCRAPER_CONFIG["max_scraping_time"]):
             items = await tv_scraper.scrape_station(station_name)
             
-        # Add metadata
+        # Validate items
+        valid_items = []
         for item in items:
-            item["station"] = station_name
-            item["scraped_at"] = datetime.utcnow().isoformat()
-            
-        logger.info(f"✅ Scraped {len(items)} items from {station_name}")
-        return items
+            if isinstance(item, dict) and item.get("title") and item.get("artist"):
+                item["station"] = station_name
+                item["scraped_at"] = datetime.utcnow().isoformat()
+                valid_items.append(item)
+        
+        logger.info(f"✅ Scraped {len(valid_items)} items from {station_name}")
+        return valid_items
         
     except asyncio.TimeoutError:
         logger.error(f"⏰ Scraping timeout for {station_name}")
+        if retry_count < SCRAPER_CONFIG["retry_attempts"]:
+            logger.info(f"🔄 Retrying {station_name} in {SCRAPER_CONFIG['retry_delay']}s...")
+            await asyncio.sleep(SCRAPER_CONFIG["retry_delay"])
+            return await scrape_tv_station(station_name, retry_count + 1)
         raise HTTPException(status_code=408, detail=f"Scraping timeout for {station_name}")
     except Exception as e:
         logger.error(f"❌ Error scraping {station_name}: {str(e)}")
+        if retry_count < SCRAPER_CONFIG["retry_attempts"]:
+            logger.info(f"🔄 Retrying {station_name} in {SCRAPER_CONFIG['retry_delay']}s...")
+            await asyncio.sleep(SCRAPER_CONFIG["retry_delay"])
+            return await scrape_tv_station(station_name, retry_count + 1)
         raise
 
 async def scrape_multiple_stations(stations: List[str]) -> Dict[str, Any]:
@@ -242,10 +302,11 @@ async def scrape_multiple_stations(stations: List[str]) -> Dict[str, Any]:
                 error_msg = f"Station {station}: {str(result)}"
                 scraping_state["errors"].append(error_msg)
                 scraping_state["scrape_results"][station] = {"error": str(result)}
+                logger.error(f"Failed to scrape {station}: {result}")
             else:
                 scraping_state["scrape_results"][station] = {
                     "count": len(result),
-                    "items": result[:10]  # Store only first 10 for status
+                    "items": result[:5]  # Store only first 5 for status
                 }
                 all_items.extend(result)
                 
@@ -257,16 +318,24 @@ async def scrape_multiple_stations(stations: List[str]) -> Dict[str, Any]:
                         plays=item.get("plays", 0),
                         score=calculate_score(item),
                         station=station,
-                        timestamp=item.get("timestamp")
+                        timestamp=item.get("timestamp"),
+                        duration=item.get("duration"),
+                        category=item.get("category", "music")
                     ) for item in result
                 ]
                 db.add_songs(song_items, f"tv_scrape_{station}")
+                logger.info(f"📥 Ingested {len(result)} songs from {station}")
+        
+        scraping_state["total_scrapes"] += 1
+        scraping_state["successful_scrapes"] += 1 if len(all_items) > 0 else 0
         
         logger.info(f"🎯 Total scraped items: {len(all_items)} from {len(stations_to_scrape)} stations")
         return {
+            "status": "success",
             "total_items": len(all_items),
             "stations_scraped": stations_to_scrape,
-            "errors": scraping_state["errors"]
+            "errors": scraping_state["errors"],
+            "timestamp": datetime.utcnow().isoformat()
         }
         
     finally:
@@ -287,8 +356,39 @@ def calculate_score(item: Dict[str, Any]) -> float:
     Calculate a score for a song based on various factors
     """
     base_score = item.get("plays", 0) * 0.1
-    # Add more scoring logic here
-    return min(base_score + 50.0, 100.0)  # Cap at 100
+    duration_bonus = 0
+    
+    # Add duration bonus (longer songs get slightly higher score)
+    if item.get("duration"):
+        try:
+            # Parse duration like "3:45"
+            if ":" in item["duration"]:
+                mins, secs = map(int, item["duration"].split(":"))
+                total_seconds = mins * 60 + secs
+                duration_bonus = min(total_seconds / 600, 10)  # Max 10 points
+        except:
+            pass
+    
+    return min(base_score + duration_bonus + 50.0, 100.0)  # Cap at 100
+
+# ====== BACKGROUND SCRAPING TASK ======
+async def periodic_scraping():
+    """
+    Background task for periodic scraping (if enabled)
+    """
+    while True:
+        try:
+            if SCRAPER_CONFIG["enable_auto_scrape"] and TV_SCRAPER_AVAILABLE:
+                logger.info("🔄 Running periodic TV scraping...")
+                result = await scrape_multiple_stations(["all"])
+                logger.info(f"Periodic scraping result: {result}")
+                
+            # Wait for next interval
+            await asyncio.sleep(SCRAPER_CONFIG["scrape_interval"])
+                
+        except Exception as e:
+            logger.error(f"Error in periodic scraping: {e}")
+            await asyncio.sleep(300)  # Wait 5 minutes on error
 
 # ====== API ENDPOINTS ======
 @app.get("/")
@@ -301,21 +401,28 @@ async def root():
         "features": ["tv_scraping", "charts", "admin", "health"],
         "scraper_available": TV_SCRAPER_AVAILABLE,
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "scrape_endpoint": "/scrape/tv (POST)"
     }
 
 @app.get("/health")
 async def health():
-    scraper_health = "healthy" if TV_SCRAPER_AVAILABLE else "unavailable"
+    scraper_status = "available" if TV_SCRAPER_AVAILABLE else "unavailable"
     
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "service": "ugboard-engine.onrender.com",
-        "scraper": scraper_health,
-        "database_songs": len(db.songs),
-        "uptime": "running",
-        "environment": os.getenv("ENV", "production")
+        "scraper": scraper_status,
+        "database": {
+            "songs": len(db.songs),
+            "stations": len(db.get_stats()["stations"])
+        },
+        "scraping": {
+            "total_scrapes": scraping_state["total_scrapes"],
+            "successful_scrapes": scraping_state["successful_scrapes"],
+            "last_scrape": scraping_state["last_scrape_time"].isoformat() if scraping_state["last_scrape_time"] else None
+        }
     }
 
 @app.get("/charts/top100")
@@ -325,20 +432,26 @@ async def top_charts(
 ):
     if station:
         songs = db.get_songs_by_station(station, limit)
-        chart_name = f"Uganda Top {limit} - {station}"
+        chart_name = f"Uganda Top {limit} - {station.upper()}"
     else:
         songs = db.get_top_songs(limit)
         chart_name = f"Uganda Top {limit}"
     
+    # Add ranks
+    for i, song in enumerate(songs, 1):
+        song["rank"] = i
+    
     return {
         "chart": chart_name,
+        "week": datetime.utcnow().strftime("%Y-W%W"),
         "entries": songs,
         "count": len(songs),
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.utcnow().isoformat(),
+        "source": "ugboard-engine"
     }
 
 @app.post("/scrape/tv")
-async def scrape_tv(
+async def trigger_scrape(
     request: ScrapeRequest,
     background_tasks: BackgroundTasks,
     auth: bool = Depends(verify_admin)
@@ -347,13 +460,18 @@ async def scrape_tv(
     Trigger TV scraping manually
     """
     if not TV_SCRAPER_AVAILABLE:
-        raise HTTPException(status_code=503, detail="TV scraper not available")
+        raise HTTPException(
+            status_code=503, 
+            detail="TV scraper not available. Check if tv_scraper.py is in scripts directory."
+        )
     
     if scraping_state["is_scraping"] and not request.force:
         raise HTTPException(
             status_code=409,
             detail="Scraping already in progress. Use force=true to override."
         )
+    
+    logger.info(f"🚀 Manual scrape requested for stations: {request.stations}")
     
     if request.async_mode:
         # Run in background
@@ -363,7 +481,8 @@ async def scrape_tv(
             "status": "started",
             "message": f"Scraping started for stations: {request.stations}",
             "async": True,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
+            "monitor": "/scrape/status"
         }
     else:
         # Run synchronously
@@ -384,14 +503,49 @@ async def get_scrape_status(auth: bool = Depends(verify_admin)):
     if scraping_state["last_scrape_time"]:
         last_time = scraping_state["last_scrape_time"].isoformat()
     
+    # Calculate total items
+    total_items = 0
+    for station_data in scraping_state["scrape_results"].values():
+        if "items" in station_data:
+            total_items += len(station_data["items"])
+    
     status = ScrapeStatus(
         is_scraping=scraping_state["is_scraping"],
         last_scrape_time=last_time,
         stations_scraped=list(scraping_state["scrape_results"].keys()),
-        total_items=sum(len(r.get("items", [])) for r in scraping_state["scrape_results"].values() if "items" in r),
-        errors=scraping_state["errors"]
+        total_items=total_items,
+        errors=scraping_state["errors"],
+        scraper_available=TV_SCRAPER_AVAILABLE
     )
     return status
+
+@app.get("/scrape/results")
+async def get_scrape_results(
+    station: Optional[str] = None,
+    limit: int = Query(20, ge=1, le=100),
+    auth: bool = Depends(verify_admin)
+):
+    """
+    Get detailed scraping results
+    """
+    if station:
+        if station in scraping_state["scrape_results"]:
+            station_data = scraping_state["scrape_results"][station]
+            if "items" in station_data:
+                return {
+                    "station": station,
+                    "items": station_data["items"][:limit],
+                    "total": station_data.get("count", 0),
+                    "timestamp": scraping_state["last_scrape_time"].isoformat() if scraping_state["last_scrape_time"] else None
+                }
+        raise HTTPException(status_code=404, detail=f"No results for station: {station}")
+    
+    # Return all results
+    return {
+        "results": scraping_state["scrape_results"],
+        "last_scrape": scraping_state["last_scrape_time"].isoformat() if scraping_state["last_scrape_time"] else None,
+        "total_stations": len(scraping_state["scrape_results"])
+    }
 
 @app.post("/ingest/tv")
 async def ingest_tv(
@@ -408,38 +562,79 @@ async def ingest_tv(
                 item.station = payload.station
         
         db.add_songs(payload.items, payload.source)
+        stats = db.get_stats()
         
         return {
             "status": "success",
             "message": f"Ingested {len(payload.items)} songs from {payload.source}",
             "source": payload.source,
             "timestamp": datetime.utcnow().isoformat(),
-            "total_songs_in_db": len(db.songs)
+            "database_stats": stats
         }
     except Exception as e:
+        logger.error(f"Ingestion error: {e}")
         raise HTTPException(status_code=500, detail=f"Ingestion error: {str(e)}")
 
 @app.get("/admin/status")
 async def admin_status(auth: bool = Depends(verify_admin)):
+    db_stats = db.get_stats()
+    
     return {
         "status": "admin_authenticated",
         "timestamp": datetime.utcnow().isoformat(),
-        "scraping_enabled": SCRAPER_CONFIG["enable_auto_scrape"],
-        "scraper_available": TV_SCRAPER_AVAILABLE,
-        "total_songs": len(db.songs),
-        "scraping_state": {
+        "scraping": {
+            "enabled": SCRAPER_CONFIG["enable_auto_scrape"],
+            "available": TV_SCRAPER_AVAILABLE,
             "is_scraping": scraping_state["is_scraping"],
-            "last_scrape": scraping_state["last_scrape_time"].isoformat() if scraping_state["last_scrape_time"] else None
+            "last_scrape": scraping_state["last_scrape_time"].isoformat() if scraping_state["last_scrape_time"] else None,
+            "total_scrapes": scraping_state["total_scrapes"]
+        },
+        "database": db_stats,
+        "config": {
+            "stations": SCRAPER_CONFIG["stations"],
+            "scrape_interval": SCRAPER_CONFIG["scrape_interval"],
+            "max_scraping_time": SCRAPER_CONFIG["max_scraping_time"]
         }
+    }
+
+@app.get("/stations")
+async def list_stations():
+    """
+    List available TV stations for scraping
+    """
+    return {
+        "stations": SCRAPER_CONFIG["stations"],
+        "count": len(SCRAPER_CONFIG["stations"]),
+        "last_scraped": scraping_state["last_scrape_time"].isoformat() if scraping_state["last_scrape_time"] else None,
+        "scraper_available": TV_SCRAPER_AVAILABLE
+    }
+
+@app.get("/stations/{station}/songs")
+async def get_station_songs(
+    station: str,
+    limit: int = Query(50, ge=1, le=100)
+):
+    """
+    Get songs from a specific station
+    """
+    songs = db.get_songs_by_station(station, limit)
+    
+    return {
+        "station": station,
+        "songs": songs,
+        "count": len(songs),
+        "timestamp": datetime.utcnow().isoformat()
     }
 
 # ====== ERROR HANDLERS ======
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
+    logger.error(f"HTTP Error {exc.status_code}: {exc.detail}")
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "error": exc.detail,
+            "status_code": exc.status_code,
             "timestamp": datetime.utcnow().isoformat(),
             "path": str(request.url.path)
         }
@@ -452,12 +647,36 @@ async def general_exception_handler(request, exc):
         status_code=500,
         content={
             "error": "Internal server error",
+            "detail": str(exc) if os.getenv("ENV") != "production" else "Contact support",
             "timestamp": datetime.utcnow().isoformat(),
             "path": str(request.url.path)
         }
     )
 
+# ====== START BACKGROUND TASK IF ENABLED ======
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on startup"""
+    if SCRAPER_CONFIG["enable_auto_scrape"] and TV_SCRAPER_AVAILABLE:
+        asyncio.create_task(periodic_scraping())
+        logger.info("🔄 Background scraping task started")
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    
+    print(f"""
+    🎵 UG Board Engine v7.0.0
+    📺 TV Scraper: {'✅ Available' if TV_SCRAPER_AVAILABLE else '❌ Not Found'}
+    📁 Scripts Path: {scripts_path}
+    🌐 Port: {port}
+    📚 Docs: http://localhost:{port}/docs
+    🔧 Scrape Endpoint: POST /scrape/tv
+    """)
+    
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        log_level="info"
+    )
