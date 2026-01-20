@@ -1,0 +1,9 @@
+ADMIN_TOKEN=admin_ug_board_secure_token_2025
+INGEST_TOKEN=ug_board_ingest_secure_token_2025
+YOUTUBE_TOKEN=ug_board_youtube_secure_token_2025
+INTERNAL_TOKEN=ug_board_internal_secure_token_2025
+ENV=production
+MAX_DB_SIZE=10000
+TRENDING_WINDOW_HOURS=8
+CACHE_TTL=300
+# REDIS_URL=redis://localhost:6379  # Optional
