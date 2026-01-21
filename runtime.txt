@@ -1,2 +1,10 @@
-# Create .python-version file
+
+
+# Create new .python-version file
 echo "3.11" > .python-version
+
+# Commit and push
+git add .python-version
+git rm runtime.txt
+git commit -m "fix: replace runtime.txt with .python-version"
+git push
