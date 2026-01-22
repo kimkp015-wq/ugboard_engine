@@ -1,0 +1,30 @@
+# Create a monitoring script
+cat > monitor.sh << 'EOF'
+#!/bin/bash
+# UG Board Engine Monitor
+
+BASE_URL="https://ugboard-1ubboardengine1-cf8eb3a3.koyeb.app"
+
+echo "🔄 Monitoring UG Board Engine..."
+echo "URL: $BASE_URL"
+echo ""
+
+while true; do
+    echo "=== $(date) ==="
+    
+    # Health check
+    curl -s "$BASE_URL/health" | grep -o '"status":"[^"]*"' || echo "Health check failed"
+    
+    # Request count
+    curl -s "$BASE_URL/" | grep -o '"requests_served":[0-9]*' || echo "No request data"
+    
+    # Song count
+    curl -s "$BASE_URL/health" | grep -o '"total_songs":[0-9]*' || echo "No song data"
+    
+    echo "---"
+    sleep 60  # Check every minute
+done
+EOF
+
+chmod +x monitor.sh
+./monitor.sh
