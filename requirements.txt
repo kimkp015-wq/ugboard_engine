@@ -1,37 +1,28 @@
 # Core FastAPI stack
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
 pydantic==2.5.0
 python-multipart==0.0.6
 
-# Database
-sqlite3
-
-# Web scraping and automation
+# Enhanced Web scraping with Playwright
 playwright==1.49.0
 lxml==5.3.0
-beautifulsoup4==4.12.3
 requests==2.31.0
-
-# Spotify API
-spotipy==2.23.0
-
-# Text processing
+beautifulsoup4==4.12.3
 rapidfuzz==3.6.1
 
 # Scheduling
 schedule==1.2.0
 
-# PDF generation (optional)
+# PDF generation (if needed for reports)
 fpdf2==2.7.4
 
-# Async HTTP
-aiohttp==3.9.1
+# Database (optional - if migrating from SQLite)
+# sqlalchemy==2.0.23
+# databases[aiosqlite]==0.8.0
 
-# Caching
-redis==5.0.1
+# Caching (optional)
+# redis==5.0.1
 
-# Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-pytest-playwright==0.4.3
+# Monitoring (optional)
+# prometheus-client==0.19.0
