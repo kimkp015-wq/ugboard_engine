@@ -1,9 +1,4 @@
-# Create it if missing
-echo "fastapi==0.104.1
+fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
-python-multipart==0.0.6" > requirements.txt
-
-git add requirements.txt
-git commit -m "Add requirements.txt"
-git push
+python-multipart==0.0.6
