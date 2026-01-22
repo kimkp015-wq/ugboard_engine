@@ -13,7 +13,6 @@ import logging
 import hashlib
 import sqlite3
 import threading
-import schedule
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Union, Tuple
@@ -37,7 +36,6 @@ from pydantic import BaseModel, Field, field_validator, ConfigDict
 import uvicorn
 import requests
 import re
-import aiohttp
 
 # ====== BUILT-IN SECRETS & CONFIGURATION ======
 class Config:
@@ -980,15 +978,16 @@ class RadioScraper:
 # Initialize radio scraper
 radio_scraper = RadioScraper()
 
-# ====== YOUTUBE SCHEDULER ======
+# ====== BUILT-IN YOUTUBE SCHEDULER (NO EXTERNAL DEPENDENCIES) ======
 class YouTubeScheduler:
-    """Automatic YouTube ingestion scheduler"""
+    """Built-in YouTube scheduler without external dependencies"""
     
     def __init__(self):
         self.channels = config.YOUTUBE_CHANNELS
         self.interval = config.YOUTUBE_SCHEDULE_INTERVAL
         self.is_running = False
         self.scheduler_thread = None
+        self.last_run = None
     
     def fetch_youtube_data(self, channel_id: str) -> List[Dict[str, Any]]:
         """Fetch data from YouTube channel"""
@@ -1107,7 +1106,8 @@ class YouTubeScheduler:
         if not self.is_running:
             return
         
-        youtube_logger.info(f"Starting YouTube scheduled job at {datetime.utcnow()}")
+        self.last_run = datetime.utcnow()
+        youtube_logger.info(f"Starting YouTube scheduled job at {self.last_run}")
         
         results = {}
         successful = 0
@@ -1148,12 +1148,29 @@ class YouTubeScheduler:
             # Run immediately on start
             self.run_scheduled_job()
             
-            # Schedule regular runs
-            schedule.every(self.interval).minutes.do(self.run_scheduled_job)
-            
+            # Simple loop for scheduling
             while self.is_running:
-                schedule.run_pending()
-                time.sleep(60)  # Check every minute
+                try:
+                    # Calculate seconds until next run
+                    if self.last_run:
+                        next_run = self.last_run + timedelta(minutes=self.interval)
+                        sleep_seconds = (next_run - datetime.utcnow()).total_seconds()
+                        
+                        if sleep_seconds > 0:
+                            # Sleep until next scheduled run
+                            time.sleep(min(sleep_seconds, 60))  # Never sleep more than 60 seconds
+                        else:
+                            # Time to run
+                            self.run_scheduled_job()
+                            time.sleep(60)  # Check again in 60 seconds
+                    else:
+                        # First run or no last run recorded
+                        self.run_scheduled_job()
+                        time.sleep(60)
+                        
+                except Exception as e:
+                    youtube_logger.error(f"Scheduler loop error: {e}")
+                    time.sleep(60)  # Wait a minute before retrying
         
         # Start scheduler in background thread
         self.scheduler_thread = threading.Thread(target=scheduler_loop, daemon=True)
@@ -1442,13 +1459,6 @@ class YouTubeIngestPayload(IngestPayload):
     video_id: Optional[str] = Field(None, max_length=20)
     category: str = Field("music", max_length=50)
 
-class ScraperRequest(BaseModel):
-    """Scraper execution request"""
-    station_id: str = Field(..., description="Station ID")
-    scraper_type: str = Field(..., pattern="^(tv|radio)$")
-    force_refresh: bool = Field(False)
-    timeout: Optional[int] = Field(None, ge=60, le=600)
-
 # ====== AUTHENTICATION ======
 security = HTTPBearer(auto_error=False)
 
@@ -1677,7 +1687,8 @@ async def root():
             "requests_served": request_count,
             "total_songs": total_songs,
             "youtube_scheduler": youtube_scheduler.is_running,
-            "youtube_interval_minutes": youtube_scheduler.interval
+            "youtube_interval_minutes": youtube_scheduler.interval,
+            "youtube_last_run": youtube_scheduler.last_run.isoformat() if youtube_scheduler.last_run else None
         },
         "stations": {
             "tv": len(tv_scraper.stations),
@@ -1915,7 +1926,9 @@ async def get_youtube_status(auth: bool = Depends(AuthService.verify_ingest)):
         "status": "running" if youtube_scheduler.is_running else "stopped",
         "interval_minutes": youtube_scheduler.interval,
         "channels": youtube_scheduler.channels,
-        "last_run": datetime.utcnow().isoformat()  # In production, track last run time
+        "last_run": youtube_scheduler.last_run.isoformat() if youtube_scheduler.last_run else None,
+        "next_run": (youtube_scheduler.last_run + timedelta(minutes=youtube_scheduler.interval)).isoformat() 
+                    if youtube_scheduler.last_run else None
     }
 
 @app.post("/youtube/trigger", tags=["YouTube"])
