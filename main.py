@@ -1,53 +1,38 @@
 """
-UG Board Engine - Simplified Production Version
+UG Board Engine - Simplified Version for Koyeb
 """
 import os
-import json
+import sys
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request, status
 from fastapi.security import HTTPBearer
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-# Simple configuration
-class Config:
-    ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "admin-ug-board-2025")
-    INGEST_TOKEN = os.getenv("INGEST_TOKEN", "1994199620002019866")
-    INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "1994199620002019866")
-    YOUTUBE_TOKEN = os.getenv("YOUTUBE_TOKEN", INGEST_TOKEN)
-    ENV = os.getenv("ENV", "production")
+# Create FastAPI app
+app = FastAPI(title="UG Board Engine", version="1.0.0")
 
-config = Config()
-
-# Models
+# Simple models
 class SongItem(BaseModel):
     title: str
     artist: str
     plays: int = 0
-    score: float = 0.0
+    score: float = Field(0.0, ge=0.0, le=100.0)
     region: str = "central"
-    station: Optional[str] = None
 
 class IngestPayload(BaseModel):
     items: List[SongItem]
     source: str
 
-# FastAPI App
-app = FastAPI(title="UG Board Engine", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"])
-
-# Database
-songs_db = []
-
-# Authentication
-security = HTTPBearer()
-
-def verify_youtube(credentials = Depends(security)):
-    if credentials.credentials != config.YOUTUBE_TOKEN:
+# Simple auth
+def verify_token(authorization: Optional[str] = Header(None)):
+    expected = os.getenv("INTERNAL_TOKEN", "1994199620002019866")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing token")
+    token = authorization.replace("Bearer ", "")
+    if token != expected:
         raise HTTPException(status_code=401, detail="Invalid token")
     return True
 
@@ -57,9 +42,7 @@ async def root():
     return {
         "service": "UG Board Engine",
         "status": "online",
-        "environment": config.ENV,
-        "timestamp": datetime.utcnow().isoformat(),
-        "endpoints": ["/health", "/charts/top100", "/ingest/youtube"]
+        "timestamp": datetime.utcnow().isoformat()
     }
 
 @app.get("/health")
@@ -67,35 +50,18 @@ async def health():
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "database": {"songs": len(songs_db), "regions": 4},
-        "environment": config.ENV
+        "database": {"songs": 0, "regions": 4}
     }
-
-@app.get("/charts/top100")
-async def get_top100(limit: int = Query(100, ge=1, le=200)):
-    sorted_songs = sorted(songs_db, key=lambda x: x.get("score", 0), reverse=True)[:limit]
-    for i, song in enumerate(sorted_songs, 1):
-        song["rank"] = i
-    return {"chart": "Uganda Top 100", "entries": sorted_songs}
 
 @app.post("/ingest/youtube")
-async def ingest_youtube(payload: IngestPayload, auth: bool = Depends(verify_youtube)):
-    added = 0
-    for item in payload.items:
-        song = item.dict()
-        song["source"] = f"youtube_{payload.source}"
-        song["ingested_at"] = datetime.utcnow().isoformat()
-        song["id"] = f"song_{len(songs_db) + 1}"
-        songs_db.append(song)
-        added += 1
-    
+async def ingest_youtube(payload: IngestPayload, auth: bool = Depends(verify_token)):
     return {
         "status": "success",
-        "message": f"Ingested {added} songs",
-        "source": payload.source,
-        "total_songs": len(songs_db)
+        "message": f"Received {len(payload.items)} songs",
+        "source": payload.source
     }
 
+# Run the app
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
