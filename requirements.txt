@@ -1,4 +1,26 @@
+# Core FastAPI stack
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
 python-multipart==0.0.6
+
+# Web scraping and HTTP
+requests==2.31.0
+
+# Scheduling (optional - we have built-in scheduler)
+schedule==1.2.0
+
+# PDF generation (if needed for reports)
+fpdf2==2.7.4
+
+# Additional utilities (already in standard library or optional)
+# - sqlite3 (built-in)
+# - threading (built-in)
+# - logging (built-in)
+# - asyncio (built-in)
+# - datetime (built-in)
+# - json (built-in)
+# - hashlib (built-in)
+# - re (built-in)
+# - pathlib (built-in)
+# - typing (built-in)
