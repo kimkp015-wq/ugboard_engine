@@ -1,26 +1,37 @@
 # Core FastAPI stack
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
 pydantic==2.5.0
 python-multipart==0.0.6
 
-# Web scraping and HTTP
+# Database
+sqlite3
+
+# Web scraping and automation
+playwright==1.49.0
+lxml==5.3.0
+beautifulsoup4==4.12.3
 requests==2.31.0
 
-# Scheduling (optional - we have built-in scheduler)
+# Spotify API
+spotipy==2.23.0
+
+# Text processing
+rapidfuzz==3.6.1
+
+# Scheduling
 schedule==1.2.0
 
-# PDF generation (if needed for reports)
+# PDF generation (optional)
 fpdf2==2.7.4
 
-# Additional utilities (already in standard library or optional)
-# - sqlite3 (built-in)
-# - threading (built-in)
-# - logging (built-in)
-# - asyncio (built-in)
-# - datetime (built-in)
-# - json (built-in)
-# - hashlib (built-in)
-# - re (built-in)
-# - pathlib (built-in)
-# - typing (built-in)
+# Async HTTP
+aiohttp==3.9.1
+
+# Caching
+redis==5.0.1
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-playwright==0.4.3
