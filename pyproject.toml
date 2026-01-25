@@ -1,0 +1,27 @@
+# pyproject.toml
+[build-system]
+requires = ["setuptools", "wheel"]
+
+[project]
+name = "stream-scraper-api"
+version = "1.0.0"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "python-multipart>=0.0.6",
+    "httpx>=0.25.0",
+    "redis>=5.0.0",
+    "playwright>=1.40.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+    "flake8>=6.0.0",
+    "fastapi-openapi-schema-validator>=0.1.0",  # For OAS 3.1 validation
+]
